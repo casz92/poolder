@@ -1,7 +1,7 @@
 defmodule Poolder do
   defmacro __using__(opts) do
     pool_name = Keyword.fetch!(opts, :pool)
-    pool_size = Keyword.get(opts, :pool_size, System.schedulers_online())
+    pool_size = Keyword.get(opts, :pool_size, 1)
     retry = Keyword.get(opts, :retry, count: 0, backoff: 0)
     retries = Keyword.get(retry, :count)
     backoff = Keyword.get(retry, :backoff, 0)
