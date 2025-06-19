@@ -69,11 +69,11 @@ defmodule MyPool do
     Logger.error("Error: #{inspect(error)}")
     cond do
       # retry immediately and update state
-      attempt == 0 -> {:retry, %{state | key: 5}
+      attempt == 1 -> {:retry, %{state | key: 5}
       # backoff for 5 seconds
-      attempt == 1 -> {:backoff, 5000}
+      attempt == 2 -> {:backoff, 5000}
       # stop retrying
-      attempt == 3 -> :halt
+      attempt == 4 -> :halt
       # retry immediately without updating state
       true -> :something
     end
