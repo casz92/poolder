@@ -9,7 +9,7 @@ The package can be installed by adding `poolder` to your list of dependencies in
 ```elixir
 def deps do
   [
-    {:poolder, "~> 0.1.0"}
+    {:poolder, "~> 0.1.3"}
   ]
 end
 ```
