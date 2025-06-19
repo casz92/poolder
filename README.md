@@ -4,7 +4,7 @@ A compile-time builder that generates a concurrent pool of worker processes for 
 
 ### Optional Features `schedules`
 - **Scheduled Tasks**: Define recurring jobs at compile time.
-- **Runtime Rescheduling**: Create, reconfigure, or cancel scheduled tasks dynamically.dynamically without restarting the system.
+- **Runtime Rescheduling**: Create, reconfigure, or cancel scheduled tasks dynamically.
 
 ## Installation
 
