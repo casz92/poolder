@@ -1,6 +1,10 @@
 # Poolder
 
-A compile-time builder that generates a concurrent pool of worker processes for parallel task execution..
+A compile-time builder that generates a concurrent pool of worker processes for parallel task execution.
+
+### Optional Features `schedules`
+- **Scheduled Tasks**: Define recurring jobs at compile time.
+- **Runtime Rescheduling**: Create, reconfigure, or cancel scheduled tasks dynamically.dynamically without restarting the system.
 
 ## Installation
 
@@ -120,7 +124,7 @@ end
 
 ```
 
-### Install pool
+### Pool installation
 ```elixir
 def MyApp.Application do
   def start(_type, _args) do
