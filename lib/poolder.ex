@@ -73,6 +73,7 @@ defmodule Poolder do
 
         case Supervisor.start_link(Poolder.Supervisor, children, name: @supervisor) do
           {:ok, pid} ->
+            __MODULE__.handle_pool_ready(pid)
             {:ok, pid}
 
           error ->
@@ -290,7 +291,9 @@ defmodule Poolder do
 
       def handle_periodic_job(_task), do: :ok
 
-      defoverridable handle_init: 1, handle_job: 2, handle_error: 4, handle_periodic_job: 1
+      def handle_pool_ready(_pid), do: :ok
+
+      defoverridable handle_init: 1, handle_job: 2, handle_error: 4, handle_periodic_job: 1, handle_pool_ready: 1
     end
   end
 end

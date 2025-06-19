@@ -14,6 +14,12 @@ def deps do
 end
 ```
 
+## Behavior
+- `handle_init/1`: Initializes the pool state.
+- `handle_job/2`: Handles the job execution.
+- `handle_error/4`: Handles job errors.
+- `handle_periodic_job/1`: Handles periodic jobs. (Scheduled jobs)
+
 ## Usage
 
 ### Building a pool
@@ -23,11 +29,14 @@ defmodule MyPool do
    pool_size: 10,
    retry: [count: 5, backoff: 1000],
    mode: :round_robin, # :round_robin | :random | :monotonic | :phash | broadcast
+   schedulers: [
+     {:pruner, :timer.hours(1)}
+   ],
    callback: [
       event: {EventBus, :notify},
       push: {Phoenix.PubSub, :broadcast},
       reply: {:websocket_client, :cast}
-    ]
+    ],
 
   @impl true
   def handle_init(state) do
@@ -79,6 +88,19 @@ defmodule MyPool do
     end
   end
 
+  ## Schedulers
+  @impl true
+  def handle_periodic_job(event) do
+    Logger.info("Periodic job: #{inspect(event)}")
+    # if return {:set, :timer.hours(2)} change scheduler interval
+    # if return {:set, :new_scheduler_name, :timer.hours(2)} create a new scheduled job
+    # if return :stop, stop all scheduled jobs
+    # if return :exti, stop current scheduled job
+    # any other return value continue the scheduled job
+    :ok
+  end
+
+  ## Private functions
   defp heavy_work(message) do
     # do something heavy
   end

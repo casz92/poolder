@@ -31,30 +31,40 @@ defmodule Poolder.Scheduler do
       for {key, interval} <- schedules, into: %{} do
         {
           key,
-          Process.send_after(self(), key, interval)
+          Process.send_after(self(), {:timeout, key}, interval)
         }
       end
 
-    {:ok, %{schedules: schedules, mod: mod, trefs: trefs}}
+    {:ok, %{schedules: Map.new(schedules), mod: mod, trefs: trefs}}
   end
 
   @impl true
-  def handle_info({:kill, name}, state) do
-    tref = Map.get(state.trefs, name)
+  def handle_info({:kill, key}, state) do
+    tref = Map.get(state.trefs, key)
     if tref, do: Process.cancel_timer(tref)
-    {:noreply, %{state | trefs: Map.put(state.trefs, name, nil)}}
+    {:noreply, %{state | trefs: Map.delete(state.trefs, key)}}
+  end
+
+  def handle_info({:set, key, new_interval}, state) do
+    tref = Map.get(state.trefs, key)
+    if tref, do: Process.cancel_timer(tref)
+    Process.send_after(self(), {:timeout, key}, new_interval)
+    {:noreply, %{state | trefs: Map.put(state.trefs, key, new_interval)}}
   end
 
   def handle_info({:timeout, key}, state = %{schedules: schedules, mod: mod, trefs: trefs}) do
     pid = self()
     interval = Map.get(schedules, key)
-    tref = Process.send_after(self(), key, interval)
+    tref = Process.send_after(self(), {:timeout, key}, interval)
 
     spawn_link(fn ->
       try do
-        case :erlang.apply(mod, key, []) do
-          {:change, time} ->
-            send(pid, {:change, time})
+        case :erlang.apply(mod, :handle_periodic_job, [key]) do
+          {:set, new_interval} when interval != new_interval ->
+            send(pid, {:set, key, new_interval})
+
+          {:set, name, new_interval} ->
+            send(pid, {:set, name, new_interval})
 
           :stop ->
             GenServer.stop(pid, :normal)
