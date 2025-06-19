@@ -25,22 +25,33 @@ end
 ### Building a pool
 ```elixir
 defmodule MyPool do
-  use Poolder, pool: :mypool,
-   pool_size: 10,
-   retry: [count: 5, backoff: 1000],
-   mode: :round_robin, # :round_robin | :random | :monotonic | :phash | broadcast
-   schedulers: [
-     {:pruner, :timer.hours(1)}
-   ],
-   callback: [
+  use Poolder,
+    pool: :mypool,
+    pool_size: 10,
+    retry: [count: 5, backoff: 1000],
+    # :round_robin | :random | :monotonic | :phash | :broadcast
+    mode: :round_robin,
+    schedules: [
+      {:every_ten_seconds, :timer.seconds(10)},
+      {:pruner, :timer.hours(1)}
+    ],
+    callback: [
       event: {EventBus, :notify},
       push: {Phoenix.PubSub, :broadcast},
       reply: {:websocket_client, :cast}
-    ],
+    ]
+
+  require Logger
 
   @impl true
   def handle_init(state) do
+    Logger.info("Worker started ##{inspect(state)} #{inspect(self())}")
     {:ok, state}
+  end
+
+  @impl true
+  def handle_pool_ready(sup_pid) do
+    Logger.info("Pool ready with supervisor #{inspect(sup_pid)}")
   end
 
   @impl true
@@ -48,18 +59,18 @@ defmodule MyPool do
     {:push, [channel, message], state}
   end
 
-  def handle_job({:hardwork, message}, state) do
+  def handle_job({:hardwork, message}, _state) do
     heavy_work(message)
   end
 
   def handle_job({:hardwork, message, :notify}, state) do
     result = heavy_work(message)
 
-    event_msg = %Event{
-          id: result.id,
-          topic: :done,
-          data: result
-        }
+    event_msg = %EventBus.Model.Event{
+      id: result.id,
+      topic: :done,
+      data: result
+    }
 
     {:event, [event_msg], state}
   end
@@ -72,13 +83,13 @@ defmodule MyPool do
     {:stop, state}
   end
 
-  require Logger  
   @impl true
   def handle_error(_data, attempt, error, state) do
     Logger.error("Error: #{inspect(error)}")
+
     cond do
       # retry immediately and update state
-      attempt == 1 -> {:retry, %{state | key: 5}
+      attempt == 1 -> {:retry, %{state | key: 5}}
       # backoff for 5 seconds
       attempt == 2 -> {:backoff, 5000}
       # stop retrying
@@ -95,7 +106,7 @@ defmodule MyPool do
     # if return {:set, :timer.hours(2)} change scheduler interval
     # if return {:set, :new_scheduler_name, :timer.hours(2)} create a new scheduled job
     # if return :stop, stop all scheduled jobs
-    # if return :exti, stop current scheduled job
+    # if return :exit, stop current scheduled job
     # any other return value continue the scheduled job
     :ok
   end
@@ -103,8 +114,10 @@ defmodule MyPool do
   ## Private functions
   defp heavy_work(message) do
     # do something heavy
+    message
   end
 end
+
 ```
 
 ### Install pool

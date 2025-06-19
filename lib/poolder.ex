@@ -96,7 +96,6 @@ defmodule Poolder do
 
         if id == 0 do
           if @mode == :round_robin do
-            IO.inspect(@mode)
             cref = :counters.new(1, [:write_concurrency])
             :persistent_term.put({@pool, :counter}, cref)
           end
