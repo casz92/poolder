@@ -71,6 +71,11 @@ defmodule Poolder do
           ] ++
             for i <- @range, do: {__MODULE__, id: i}
 
+        if @mode == :round_robin do
+          cref = :counters.new(1, [:write_concurrency])
+          :persistent_term.put({@pool, :counter}, cref)
+        end
+
         case Supervisor.start_link(Poolder.Supervisor, children, name: @supervisor) do
           {:ok, pid} ->
             __MODULE__.handle_pool_ready(pid)
@@ -93,14 +98,6 @@ defmodule Poolder do
       @impl true
       def init(id) do
         :persistent_term.put({@pool, id}, self())
-
-        if id == 0 do
-          if @mode == :round_robin do
-            cref = :counters.new(1, [:write_concurrency])
-            :persistent_term.put({@pool, :counter}, cref)
-          end
-        end
-
         handle_init(id)
       end
 
@@ -292,7 +289,11 @@ defmodule Poolder do
 
       def handle_pool_ready(_pid), do: :ok
 
-      defoverridable handle_init: 1, handle_job: 2, handle_error: 4, handle_periodic_job: 1, handle_pool_ready: 1
+      defoverridable handle_init: 1,
+                     handle_job: 2,
+                     handle_error: 4,
+                     handle_periodic_job: 1,
+                     handle_pool_ready: 1
     end
   end
 end
