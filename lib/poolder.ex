@@ -4,7 +4,7 @@ defmodule Poolder do
     pool_size = Keyword.get(opts, :pool_size, System.schedulers_online())
     retry = Keyword.get(opts, :retry, count: 0, backoff: 0)
     retries = Keyword.get(retry, :count)
-    backoff = Keyword.get(retry, :backoff)
+    backoff = Keyword.get(retry, :backoff, 0)
     callbacks = Keyword.get(opts, :callback, [])
     mode = Keyword.get(opts, :mode, :round_robin)
     schedules = Keyword.get(opts, :schedules, [])
@@ -38,6 +38,9 @@ defmodule Poolder do
       @supervisor __MODULE__.Supervisor
       @mode mode
       @schedules schedules
+      @max_index @pool_size - 1
+      @range 0..@max_index
+      @call_timeout 5000
 
       def child_spec(id: worker_id) do
         %{
@@ -66,7 +69,7 @@ defmodule Poolder do
             {Poolder.Scheduler,
              schedules: @schedules, name: via_tuple(:scheduler), mod: __MODULE__}
           ] ++
-            for i <- 0..(@pool_size - 1), do: {__MODULE__, id: i}
+            for i <- @range, do: {__MODULE__, id: i}
 
         case Supervisor.start_link(Poolder.Supervisor, children, name: @supervisor) do
           {:ok, pid} ->
@@ -79,7 +82,7 @@ defmodule Poolder do
 
       defp via_tuple(id), do: {:via, Registry, {@pool, id}}
 
-      @compile {:inline, next_pid: 0, try_execute: 3}
+      @compile {:inline, try_execute: 3, reply: 3}
       @behaviour Poolder.Behaviour
 
       def start_link(id) do
@@ -92,11 +95,10 @@ defmodule Poolder do
 
         if id == 0 do
           if @mode == :round_robin do
+            IO.inspect(@mode)
             cref = :counters.new(1, [:write_concurrency])
             :persistent_term.put({@pool, :counter}, cref)
           end
-
-          # Process.send_after(self(), :cleanup, @cleanup_interval)
         end
 
         handle_init(id)
@@ -108,56 +110,107 @@ defmodule Poolder do
           # Reset the counter to 0
           defp reset_counter do
             cref = :persistent_term.get({@pool, :counter})
-            :counters.put(cref, 0, 0)
+            :counters.put(cref, 1, 0)
           end
 
           @max_number 1_000_000
-          defmacrop next_pid do
-            quote do
-              cref = :persistent_term.get({@pool, :counter})
-              number = :counters.add(cref, 0, 1)
-              key = rem(number, @pool_size)
-              if number > @max_number, do: reset_counter()
-              :persistent_term.get({@pool, key})
-            end
+          def next_pid do
+            cref = :persistent_term.get({@pool, :counter})
+            :counters.add(cref, 1, 1)
+            number = :counters.get(cref, 1)
+            key = rem(number, @pool_size)
+            if number > @max_number, do: reset_counter()
+            :persistent_term.get({@pool, key})
           end
 
         # Random dispatch
         :random ->
-          @range @pool_size - 1
-          def next_pid, do: :rand.uniform(@range)
+          def next_pid do
+            number = :rand.uniform(@pool_size) - 1
+            :persistent_term.get({@pool, number})
+          end
 
         # Monotonic time dispatch
         :monotonic ->
-          def next_pid, do: :erlang.monotonic_time() |> abs() |> rem(@pool_size)
+          def next_pid do
+            number = :erlang.monotonic_time() |> abs() |> rem(@pool_size)
+            :persistent_term.get({@pool, number})
+          end
 
         # PHash dispatch
         :phash ->
-          defmacrop next_pid do
-            quote do
-              :erlang.phash2(var!(data), @pool_size)
-            end
+          def next_pid(data) do
+            number = :erlang.phash2(data, @pool_size)
+            :persistent_term.get({@pool, number})
           end
+
+        :broadcast ->
+          def next_pid, do: nil
+
+        _ ->
+          raise "Invalid pool mode: #{@mode} use :round_robin, :random, :monotonic, :broadcast or :phash"
       end
 
       def pid(id), do: :persistent_term.get({@pool, id}, nil)
 
       def size, do: @pool_size
 
-      def cast(data) do
-        index = next_pid()
-        pid = :persistent_term.get({@pool, index})
-        GenServer.cast(pid, data)
+      case @mode do
+        :phash ->
+          def cast(data) do
+            pid = next_pid(data)
+            GenServer.cast(pid, data)
+          end
+
+          def call(data, timeout \\ @call_timeout) do
+            try do
+              pid = next_pid(data)
+              {:ok, GenServer.call(pid, data, timeout)}
+            catch
+              :exit, {:timeout, _} -> {:error, :timeout}
+              :exit, reason -> {:error, reason}
+            end
+          end
+
+        :broadcast ->
+          def cast(data) do
+            for i <- @range do
+              pid = :persistent_term.get({@pool, i})
+              GenServer.cast(pid, data)
+            end
+          end
+
+          def call(data, timeout \\ @call_timeout) do
+            for i <- @range do
+              try do
+                pid = :persistent_term.get({@pool, i})
+                {:ok, GenServer.call(pid, data, timeout)}
+              catch
+                :exit, {:timeout, _} -> {:error, :timeout}
+                :exit, reason -> {:error, reason}
+              end
+            end
+          end
+
+        _ ->
+          def cast(data) do
+            pid = next_pid()
+            GenServer.cast(pid, data)
+          end
+
+          def call(data, timeout \\ @call_timeout) do
+            try do
+              pid = next_pid()
+              {:ok, GenServer.call(pid, data, timeout)}
+            catch
+              :exit, {:timeout, _} -> {:error, :timeout}
+              :exit, reason -> {:error, reason}
+            end
+          end
       end
 
       def cast(pid, data) do
         GenServer.cast(pid, data)
-      end
-
-      def call(data, timeout \\ 5000) do
-        index = next_pid()
-        pid = :persistent_term.get({@pool, index})
-        GenServer.call(pid, data, timeout)
       end
 
       @impl true
@@ -167,10 +220,7 @@ defmodule Poolder do
 
       @impl true
       def handle_call(data, _from, state) do
-        case handle_job(data, state) do
-          {:reply, reply, new_state} -> {:reply, reply, new_state}
-          _ -> {:reply, :ok, state}
-        end
+        try_execute(data, 1, state)
       end
 
       @impl true
@@ -182,7 +232,7 @@ defmodule Poolder do
         replies
       end
 
-      defp reply(_call, _message, state), do: {:noreply, state}
+      defp reply(_call, message, state), do: {:reply, message, state}
 
       defp try_execute(data, attempt, state) when attempt <= @retries do
         try do

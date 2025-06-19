@@ -11,7 +11,10 @@ defmodule Poolder.Scheduler do
     }
   end
 
-  def start_link([schedules: schedules, name: name] = opts) do
+  def start_link(opts) do
+    name = Keyword.fetch!(opts, :name)
+    schedules = Keyword.fetch!(opts, :schedules)
+
     if schedules != [] do
       GenServer.start_link(__MODULE__, opts, name: name)
     else

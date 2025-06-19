@@ -9,7 +9,7 @@ The package can be installed by adding `poolder` to your list of dependencies in
 ```elixir
 def deps do
   [
-    {:poolder, ">= 0.1"}
+    {:poolder, "~> 0.1"}
   ]
 end
 ```
@@ -22,7 +22,7 @@ defmodule MyPool do
   use Poolder, pool: :mypool,
    pool_size: 10,
    retry: [count: 5, backoff: 1000],
-   mode: :round_robin, # :round_robin | :random | :monotonic | :phash
+   mode: :round_robin, # :round_robin | :random | :monotonic | :phash | broadcast
    callback: [
       event: {EventBus, :notify},
       push: {Phoenix.PubSub, :broadcast},
