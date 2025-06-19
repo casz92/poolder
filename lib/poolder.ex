@@ -7,7 +7,7 @@ defmodule Poolder do
     backoff = Keyword.get(retry, :backoff)
     callbacks = Keyword.get(opts, :callback, [])
     mode = Keyword.get(opts, :mode, :round_robin)
-    crontab = Keyword.get(opts, :crontab, [])
+    schedules = Keyword.get(opts, :schedules, [])
 
     replies =
       for {call, {mod, fun}} <- callbacks do
@@ -25,7 +25,7 @@ defmodule Poolder do
             retries: retries,
             backoff: backoff,
             mode: mode,
-            crontab: crontab,
+            schedules: schedules,
             replies: replies
           ] do
       use GenServer
@@ -37,6 +37,7 @@ defmodule Poolder do
       @catcher @retries > 0
       @supervisor __MODULE__.Supervisor
       @mode mode
+      @schedules schedules
 
       def child_spec(id: worker_id) do
         %{
@@ -62,7 +63,8 @@ defmodule Poolder do
         children =
           [
             {Registry, keys: :unique, name: @pool},
-            {Poolder.Scheduler, crontab: @crontab, name: via_tuple(:scheduler), mod: __MODULE__}
+            {Poolder.Scheduler,
+             schedules: @schedules, name: via_tuple(:scheduler), mod: __MODULE__}
           ] ++
             for i <- 0..(@pool_size - 1), do: {__MODULE__, id: i}
 

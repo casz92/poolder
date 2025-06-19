@@ -11,8 +11,8 @@ defmodule Poolder.Scheduler do
     }
   end
 
-  def start_link([crontab: crontab, name: name] = opts) do
-    if crontab != [] do
+  def start_link([schedules: schedules, name: name] = opts) do
+    if schedules != [] do
       GenServer.start_link(__MODULE__, opts, name: name)
     else
       :ignore
@@ -21,16 +21,18 @@ defmodule Poolder.Scheduler do
 
   @impl true
   def init(opts) do
-    crontab = Keyword.get(opts, :crontab)
+    schedules = Keyword.get(opts, :schedules)
     mod = Keyword.get(opts, :mod)
 
     trefs =
-      for {key, txt} <- crontab do
-        next_time = Poolder.Cron.next_run(txt)
-        Process.send_after(self(), key, next_time)
+      for {key, interval} <- schedules, into: %{} do
+        {
+          key,
+          Process.send_after(self(), key, interval)
+        }
       end
 
-    {:ok, %{crontab: crontab, mod: mod, trefs: trefs}}
+    {:ok, %{schedules: schedules, mod: mod, trefs: trefs}}
   end
 
   @impl true
@@ -40,14 +42,17 @@ defmodule Poolder.Scheduler do
     {:noreply, %{state | trefs: Map.put(state.trefs, name, nil)}}
   end
 
-  def handle_info({:timeout, key}, state = %{crontab: txt, mod: mod, trefs: trefs}) do
+  def handle_info({:timeout, key}, state = %{schedules: schedules, mod: mod, trefs: trefs}) do
     pid = self()
-    next_time = Poolder.Cron.next_run(txt)
-    tref = Process.send_after(self(), key, next_time)
+    interval = Map.get(schedules, key)
+    tref = Process.send_after(self(), key, interval)
 
     spawn_link(fn ->
       try do
         case :erlang.apply(mod, key, []) do
+          {:change, time} ->
+            send(pid, {:change, time})
+
           :stop ->
             GenServer.stop(pid, :normal)
 
