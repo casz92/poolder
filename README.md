@@ -20,6 +20,7 @@ end
 
 ## Behavior
 - `handle_init/1`: Initializes the pool state.
+- `handle_pool_ready/1`: Notifies when the pool is ready.
 - `handle_job/2`: Handles the job execution.
 - `handle_error/4`: Handles job errors.
 - `handle_periodic_job/1`: Handles periodic jobs. (Scheduled jobs)
@@ -30,19 +31,23 @@ end
 ```elixir
 defmodule MyPool do
   use Poolder,
+    # pool name
     pool: :mypool,
+    # number of workers
     pool_size: 10,
     retry: [count: 5, backoff: 1000],
     # :round_robin | :random | :monotonic | :phash | :broadcast
     mode: :round_robin,
+    # list of scheduled jobs
     schedules: [
       {:every_ten_seconds, :timer.seconds(10)},
       {:pruner, :timer.hours(1)}
     ],
+    # list of custom callbacks
     callback: [
       event: {EventBus, :notify},
       push: {Phoenix.PubSub, :broadcast},
-      reply: {:websocket_client, :cast}
+      cast: {:websocket_client, :cast}
     ]
 
   require Logger
