@@ -7,6 +7,7 @@ defmodule Poolder.Batcher do
     retry = Keyword.get(opts, :retry, count: 0, backoff: 0)
     retries = Keyword.get(retry, :count)
     backoff = Keyword.get(retry, :backoff, 0)
+    hibernate_after = Keyword.get(opts, :hibernate_after, :infinity)
 
     quote bind_quoted: [
             name: name,
@@ -14,7 +15,8 @@ defmodule Poolder.Batcher do
             batch_timeout: batch_timeout,
             batch_reverse: batch_reverse,
             retries: retries,
-            backoff: backoff
+            backoff: backoff,
+            hibernate_after: hibernate_after
           ] do
       @name name
       @batch_limit batch_limit
@@ -23,9 +25,14 @@ defmodule Poolder.Batcher do
       @retries retries
       @backoff backoff
       @infinity batch_timeout == :infinity
+      @hibernate_after hibernate_after
 
       @behaviour Poolder.Batcher
       @compile {:inline, add: 3}
+
+      if @hibernate_after <= @batch_timeout do
+        raise ArgumentError, "#{__MODULE__} hibernate_after must be greater than batch_timeout"
+      end
 
       # API
 
@@ -40,11 +47,14 @@ defmodule Poolder.Batcher do
       end
 
       def start(opts \\ []) do
-        spawn(__MODULE__, :run, [opts])
+        pid = spawn(__MODULE__, :run, [opts])
+        Process.register(pid, @name)
+        {:ok, pid}
       end
 
       def start_link(opts \\ []) do
         pid = spawn_link(__MODULE__, :run, [opts])
+        Process.register(pid, @name)
 
         {:ok, pid}
       end
@@ -61,7 +71,7 @@ defmodule Poolder.Batcher do
         #     loop(t, c)
         # end
         handle_init(opts)
-        loop(t, c)
+        loop(t, c, nil)
       end
 
       def push(item) do
@@ -80,34 +90,66 @@ defmodule Poolder.Batcher do
         send(pid, :flush)
       end
 
-      defp loop(t, c) do
+      def loop(t, c, tref) do
         receive do
           {:push, item} ->
             add(t, c, item)
-            loop(t, c)
+
+            case :edeque.size(c) do
+              1 ->
+                tref = send_after()
+                loop(t, c, tref)
+
+              size when size < @batch_limit ->
+                loop(t, c, tref)
+
+              _ ->
+                flush(t, c, tref)
+            end
+
+            if :edeque.size(c) == @batch_limit do
+              flush(t, c, tref)
+            else
+              loop(t, c, tref)
+            end
 
           :flush ->
-            flush(t, c)
+            flush(t, c, tref)
 
           _ ->
-            loop(t, c)
+            loop(t, c, tref)
         after
-          @batch_timeout ->
-            flush(t, c)
+          @hibernate_after ->
+            handle_hibernate({t, c, tref})
+            :erlang.hibernate(__MODULE__, :loop, [t, c, tref])
         end
       end
 
-      defp flush(t, c) do
+      defp flush(t, c, tref) do
+        tref = cancel_timer(tref)
+
         if :edeque.size(c) == 0 do
-          loop(t, c)
+          loop(t, c, tref)
         else
           pid = self()
           stream = :edeque.stream(t)
           state = %{table: t}
           spawn_link(__MODULE__, :try_handle_batch, [pid, stream, 1, state])
           :edeque.reset_counters(c)
-          loop(:edeque.new_table(), c)
+          loop(:edeque.new_table(), c, tref)
         end
+      end
+
+      if @infinity do
+        defp send_after, do: nil
+      else
+        defp send_after, do: Process.send_after(self(), :flush, @batch_timeout)
+      end
+
+      defp cancel_timer(nil), do: nil
+
+      defp cancel_timer(tref) do
+        Process.cancel_timer(tref)
       end
 
       if @batch_reverse do
@@ -122,6 +164,7 @@ defmodule Poolder.Batcher do
 
       def handle_init(state), do: {:ok, state}
       def handle_batch(_batch, _state), do: :ok
+      def handle_hibernate(_state), do: :ok
 
       def try_handle_batch(pid, batch, attempt, state) do
         try do
@@ -139,10 +182,11 @@ defmodule Poolder.Batcher do
         end
       end
 
-      defoverridable handle_batch: 2, handle_init: 1
+      defoverridable handle_batch: 2, handle_init: 1, handle_hibernate: 1
     end
   end
 
   @callback handle_init(state :: term) :: term
   @callback handle_batch(batch_stream :: Enumerable.t(), state :: term) :: term
+  @callback handle_hibernate(state :: term) :: term
 end

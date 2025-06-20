@@ -23,6 +23,7 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
 - **Scheduled Tasks**: Define recurring jobs at compile time.
 - **Runtime Rescheduling**: Create, reconfigure, or cancel scheduled tasks dynamically.
 - **Batch Processing**: Aggregate and process multiple tasks in batches.
+- **Tasker**: A simple task executor for concurrent processing with limited concurrency.
 
 ## Callbacks
 ### Workers callbacks
@@ -39,6 +40,7 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
 - `handle_init/1`: Initializes the scheduler state.
 - `handle_job/2`: Handles the job execution.
 - `handle_error/4`: Handles job errors.
+
 
 ## Usage
 
@@ -206,7 +208,7 @@ end
 defmodule Batcher do
   use Poolder.Batcher,
     # batcher unique name
-    name: :batcher,
+    name: :mybatcher,
     # batch size
     limit: 100,
     # batch timeout — flushes and sends the batch for processing after this time
@@ -215,7 +217,9 @@ defmodule Batcher do
     # reverse the batch order, fifo (default) or lifo (true)
     reverse: false,
     # retry options
-    retry: [count: 3, backoff: 1000]
+    retry: [count: 3, backoff: 1000],
+    # hibernate after this time in milliseconds or :infinity
+    hibernate_after: 600_000
 
   @impl true
   def handle_init(state) do
@@ -226,14 +230,36 @@ defmodule Batcher do
   def handle_batch(batch, _state) do
     IO.inspect(batch, label: "batch")
   end
+
+  @impl true
+  def handle_hibernate(_state) do
+    IO.puts("hibernating")
+  end
 end
 
 # usage
 {:ok, pid} = Batcher.start_link([])
 Batcher.push(pid, :yellow)
+Batcher.push(:mybatcher, 5)
 Batcher.push(pid, "Amsterdam")
 Batcher.push(pid, ["orange", "apple", "watermelon"])
 Batcher.flush(pid) # force processing if batch is not full
+```
+
+## Tasker
+```elixir
+{:ok, pid} = Tasker.start_link(name: :mytaker, limit: 2, hibernate_after: 60_000)
+
+results =
+  for i <- 1..100 do
+    fun = fn ->
+      IO.inspect(i)
+    end
+
+    Tasker.execute(pid, fun)
+  end
+
+IO.inspect(results, label: "results")
 ```
 
 ## Installation
@@ -241,7 +267,7 @@ Add `poolder` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:poolder, "~> 0.1.6"}
+    {:poolder, "~> 0.1.7"}
   ]
 end
 ```
@@ -251,6 +277,7 @@ end
 mix test test/worker_test.exs # soon
 mix test test/batcher_test.exs
 mix test test/scheduler_test.exs # soon
+mix test test/tasker_test.exs
 ```
 
 ## License
