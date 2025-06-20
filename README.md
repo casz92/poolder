@@ -198,7 +198,8 @@ defmodule Batcher do
     name: :batcher,
     # batch size
     limit: 100,
-    # batch timeout (it will flush the batch after this time)
+    # batch timeout — flushes and sends the batch for processing after this time
+    # interval in milliseconds or :infinity
     timeout: 10_000,
     # reverse the batch order
     reverse: false,

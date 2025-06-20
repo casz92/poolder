@@ -2,7 +2,7 @@ defmodule Poolder.Batcher do
   defmacro __using__(opts) do
     name = Keyword.get(opts, :name, __MODULE__)
     batch_limit = Keyword.get(opts, :limit, 5)
-    batch_timeout = Keyword.get(opts, :timeout, 10_000)
+    batch_timeout = Keyword.get(opts, :timeout, :infinity)
     batch_reverse = Keyword.get(opts, :reverse, false)
     retry = Keyword.get(opts, :retry, count: 0, backoff: 0)
     retries = Keyword.get(retry, :count)
@@ -22,6 +22,7 @@ defmodule Poolder.Batcher do
       @batch_reverse batch_reverse
       @retries retries
       @backoff backoff
+      @infinity batch_timeout == :infinity
 
       use GenServer
       @behaviour Poolder.Batcher
@@ -64,10 +65,12 @@ defmodule Poolder.Batcher do
       end
 
       @impl true
-      def handle_cast({:push, item}, %{queue: q, counter: c, timer: nil} = state) do
-        :counters.add(c, 1, 1)
-        timer = Process.send_after(self(), :flush, @batch_timeout)
-        {:noreply, %{state | queue: add_queue(q, item), timer: timer}}
+      if not @infinity do
+        def handle_cast({:push, item}, %{queue: q, counter: c, timer: nil} = state) do
+          :counters.add(c, 1, 1)
+          timer = Process.send_after(self(), :flush, @batch_timeout)
+          {:noreply, %{state | queue: add_queue(q, item), timer: timer}}
+        end
       end
 
       def handle_cast({:push, item}, %{queue: q, counter: c} = state) do
@@ -85,10 +88,12 @@ defmodule Poolder.Batcher do
         end
       end
 
-      def handle_cast({:push_many, items}, %{queue: q, counter: c, timer: nil} = state) do
-        :counters.add(c, 1, length(items))
-        timer = Process.send_after(self(), :flush, @batch_timeout)
-        {:noreply, %{state | queue: add_many_queue(q, items), timer: timer}}
+      if not @infinity do
+        def handle_cast({:push_many, items}, %{queue: q, counter: c, timer: nil} = state) do
+          :counters.add(c, 1, length(items))
+          timer = Process.send_after(self(), :flush, @batch_timeout)
+          {:noreply, %{state | queue: add_many_queue(q, items), timer: timer}}
+        end
       end
 
       def handle_cast({:push_many, items}, %{queue: q, counter: c} = state) do
