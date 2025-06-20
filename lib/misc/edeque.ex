@@ -1,5 +1,7 @@
 defmodule :edeque do
-  @moduledoc """
+  @moduledoc false
+
+  @doc """
   A concurrent deque implemented using ETS and counters.
   Usage:
   {ets, c} = :edeque.new()
@@ -8,10 +10,9 @@ defmodule :edeque do
   :edeque.push(ets, c, "Hong Kong")
   :edeque.push_front(ets, c, "Kyoto")
   :edeque.put(ets, c, 0, "Tokyo")
-  :edeque.stream_and_destroy(ets) |> Enum.to_list() |> IO.inspect()
+  :edeque.stream(ets) |> Enum.to_list() |> IO.inspect()
   :edeque.destroy(ets)
   """
-
   def new do
     ets = new_table()
     c = new_counters()
