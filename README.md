@@ -2,35 +2,47 @@
 
 A compile-time builder that generates a concurrent pool of worker processes, batchers and schedulers for parallel task execution.
 
+### Contents
+- [Features](#features)
+- [Behaviors](#callbacks)
+  - [Workers](#workers-callbacks)
+  - [Batchers](#batcher-callbacks)
+  - [Schedulers](#scheduler-callbacks)
+- [Usage](#usage)
+  - [Building a pool of workers](#building-a-pool-of-workers)
+  - [Pool installation](#pool-installation)
+  - [Using pool](#using-pool)
+  - [Scheduling jobs](#scheduling-jobs)
+  - [Building a batcher](#building-a-batcher)
+- [Installation](#installation)
+- [Testing](#testing)
+- [License](#license)
 
-### Features
+## Features
 - **Fixed Pool Size**: Define the number of workers at compile time.
 - **Scheduled Tasks**: Define recurring jobs at compile time.
 - **Runtime Rescheduling**: Create, reconfigure, or cancel scheduled tasks dynamically.
 - **Batch Processing**: Aggregate and process multiple tasks in batches.
 
-
-## Installation
-The package can be installed by adding `poolder` to your list of dependencies in `mix.exs`:
-
-```elixir
-def deps do
-  [
-    {:poolder, "~> 0.1.5"}
-  ]
-end
-```
-
-## Behavior
+## Callbacks
+### Workers callbacks
 - `handle_init/1`: Initializes the pool state.
 - `handle_pool_ready/1`: Notifies when the pool is ready.
 - `handle_job/2`: Handles the job execution.
 - `handle_error/4`: Handles job errors.
-- `handle_periodic_job/1`: Handles periodic jobs. (Scheduled jobs)
+
+### Batcher callbacks
+- `handle_init/1`: Initializes the batcher state.
+- `handle_batch/2`: Handles the batch processing.
+
+### Scheduler callbacks
+- `handle_init/1`: Initializes the scheduler state.
+- `handle_job/2`: Handles the job execution.
+- `handle_error/4`: Handles job errors.
 
 ## Usage
 
-### Building a pool
+### Building a pool of workers
 ```elixir
 defmodule MyPool do
   use Poolder.Worker,
@@ -189,7 +201,6 @@ defmodule MyJobs do
 end
 ```
 
-
 ## Building a batcher
 ```elixir
 defmodule Batcher do
@@ -201,7 +212,7 @@ defmodule Batcher do
     # batch timeout — flushes and sends the batch for processing after this time
     # interval in milliseconds or :infinity
     timeout: 10_000,
-    # reverse the batch order
+    # reverse the batch order, fifo (default) or lifo (true)
     reverse: false,
     # retry options
     retry: [count: 3, backoff: 1000]
@@ -222,10 +233,32 @@ end
 Batcher.push(pid, :yellow)
 Batcher.push(pid, "Amsterdam")
 Batcher.push(pid, ["orange", "apple", "watermelon"])
-Batcher.push_many(pid, Enum.to_list(1..10))
-Batcher.push_many(pid, [1, :cool, 5])
-Batcher.force_flush(pid)
+Batcher.flush(pid) # force processing if batch is not full
+```
+
+## Installation
+Add `poolder` to your list of dependencies in `mix.exs`:
+```elixir
+def deps do
+  [
+    {:poolder, "~> 0.1.6"}
+  ]
+end
+```
+
+## Testing
+```bash
+mix test test/worker_test.exs # soon
+mix test test/batcher_test.exs
+mix test test/scheduler_test.exs # soon
 ```
 
 ## License
 This project is licensed under the MIT License.
+
+---
+⚠️ **Important Notice**
+
+This library is under active development and may undergo several changes before reaching version `0.5.0`. Some structures, functions, or behaviors may be modified or removed in future updates. If you plan to use it in production, it's recommended to pin a specific version or keep track of ongoing changes.
+
+Thanks for being part of the journey! 🤗

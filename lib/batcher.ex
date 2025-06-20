@@ -24,135 +24,104 @@ defmodule Poolder.Batcher do
       @backoff backoff
       @infinity batch_timeout == :infinity
 
-      use GenServer
       @behaviour Poolder.Batcher
-      @compile {:inline, add_queue: 2, add_many_queue: 2}
+      @compile {:inline, add: 3}
 
       # API
 
-      def start_link(opts) do
-        GenServer.start_link(__MODULE__, opts, name: @name)
+      def child_spec(opts \\ []) do
+        %{
+          id: __MODULE__,
+          start: {__MODULE__, :start_link, [opts]},
+          restart: :permanent,
+          type: :worker,
+          shutdown: 500
+        }
+      end
+
+      def start(opts \\ []) do
+        spawn(__MODULE__, :run, [opts])
+      end
+
+      def start_link(opts \\ []) do
+        pid = spawn_link(__MODULE__, :run, [opts])
+
+        {:ok, pid}
+      end
+
+      def run(opts) do
+        {t, c} = :edeque.new()
+
+        # case handle_init(opts) do
+        #   :ignore ->
+        #     :ok
+
+        #   _ ->
+        #     # Process.register(self(), __MODULE__)
+        #     loop(t, c)
+        # end
+        handle_init(opts)
+        loop(t, c)
       end
 
       def push(item) do
-        GenServer.cast(__MODULE__, {:push, item})
+        send(__MODULE__, {:push, item})
       end
 
       def push(pid, item) do
-        GenServer.cast(pid, {:push, item})
+        send(pid, {:push, item})
       end
 
-      def push_many(items) do
-        GenServer.cast(__MODULE__, {:push_many, items})
-      end
-
-      def push_many(pid, items) do
-        GenServer.cast(pid, {:push_many, items})
-      end
-
-      def force_flush() do
+      def flush() do
         send(__MODULE__, :flush)
       end
 
-      def force_flush(pid) do
+      def flush(pid) do
         send(pid, :flush)
       end
 
-      @impl true
-      def init(_opts) do
-        state = %{queue: :queue.new(), counter: :counters.new(1, []), timer: nil}
-        handle_init(state)
-      end
+      defp loop(t, c) do
+        receive do
+          {:push, item} ->
+            add(t, c, item)
+            loop(t, c)
 
-      @impl true
-      if not @infinity do
-        def handle_cast({:push, item}, %{queue: q, counter: c, timer: nil} = state) do
-          :counters.add(c, 1, 1)
-          timer = Process.send_after(self(), :flush, @batch_timeout)
-          {:noreply, %{state | queue: add_queue(q, item), timer: timer}}
+          :flush ->
+            flush(t, c)
+
+          _ ->
+            loop(t, c)
+        after
+          @batch_timeout ->
+            flush(t, c)
         end
       end
 
-      def handle_cast({:push, item}, %{queue: q, counter: c} = state) do
-        :counters.add(c, 1, 1)
-        q = add_queue(q, item)
-
-        if :counters.get(c, 1) >= @batch_limit do
-          updated_state = %{state | queue: :queue.new(), timer: nil}
-          flush(q, updated_state)
-          cancel_timer(state.timer)
-          :counters.sub(c, 1, @batch_limit)
-          {:noreply, updated_state}
+      defp flush(t, c) do
+        if :edeque.size(c) == 0 do
+          loop(t, c)
         else
-          {:noreply, %{state | queue: q}}
+          pid = self()
+          stream = :edeque.stream(t)
+          state = %{table: t}
+          spawn_link(__MODULE__, :try_handle_batch, [pid, stream, 1, state])
+          :edeque.reset_counters(c)
+          loop(:edeque.new_table(), c)
         end
-      end
-
-      if not @infinity do
-        def handle_cast({:push_many, items}, %{queue: q, counter: c, timer: nil} = state) do
-          :counters.add(c, 1, length(items))
-          timer = Process.send_after(self(), :flush, @batch_timeout)
-          {:noreply, %{state | queue: add_many_queue(q, items), timer: timer}}
-        end
-      end
-
-      def handle_cast({:push_many, items}, %{queue: q, counter: c} = state) do
-        :counters.add(c, 1, length(items))
-        q = add_many_queue(q, items)
-
-        if :counters.get(c, 1) >= @batch_limit do
-          updated_state = %{state | queue: :queue.new(), timer: nil}
-          flush(q, updated_state)
-          cancel_timer(state.timer)
-          :counters.sub(c, 1, @batch_limit)
-          {:noreply, updated_state}
-        else
-          {:noreply, %{state | queue: q}}
-        end
-      end
-
-      @impl true
-      def handle_info(:flush, %{queue: q, counter: c, timer: timer} = state) do
-        cancel_timer(timer)
-        updated_state = %{state | queue: :queue.new(), timer: nil}
-        :counters.put(c, 1, 0)
-        flush(q, updated_state)
-        {:noreply, updated_state}
-      end
-
-      def handle_info({:state, state}, _state) do
-        {:noreply, state}
       end
 
       if @batch_reverse do
-        defp add_queue(q, item) do
-          :queue.in(item, q)
-        end
-
-        defp add_many_queue(q, items) do
-          Enum.reduce(items, q, fn item, acc -> :queue.in(item, acc) end)
+        defp add(t, c, item) do
+          :edeque.push_front(t, c, item)
         end
       else
-        defp add_queue(q, item) do
-          :queue.in_r(item, q)
+        defp add(t, c, item) do
+          :edeque.push(t, c, item)
         end
-
-        defp add_many_queue(q, items) do
-          Enum.reduce(items, q, fn item, acc -> :queue.in_r(item, acc) end)
-        end
-      end
-
-      defp flush(q, state) do
-        batch = :queue.to_list(q)
-        pid = self()
-        spawn_link(__MODULE__, :try_handle_batch, [pid, batch, 0, state])
       end
 
       def handle_init(state), do: {:ok, state}
-      def handle_batch(_batch, state), do: {:ok, state}
-
-      defp cancel_timer(nil), do: :ok
-      defp cancel_timer(ref), do: Process.cancel_timer(ref)
+      def handle_batch(_batch, _state), do: :ok
 
       def try_handle_batch(pid, batch, attempt, state) do
         try do
@@ -165,6 +134,8 @@ defmodule Poolder.Batcher do
             else
               {:error, error}
             end
+        after
+          :ets.delete(state.table)
         end
       end
 
@@ -173,5 +144,5 @@ defmodule Poolder.Batcher do
   end
 
   @callback handle_init(state :: term) :: term
-  @callback handle_batch(batch :: list(), state :: term) :: term
+  @callback handle_batch(batch_stream :: Enumerable.t(), state :: term) :: term
 end

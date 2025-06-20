@@ -8,17 +8,31 @@ defmodule :edeque do
   :edeque.push(ets, c, "Hong Kong")
   :edeque.push_front(ets, c, "Kyoto")
   :edeque.put(ets, c, 0, "Tokyo")
-  :edeque.stream(ets) |> Enum.to_list() |> IO.inspect()
+  :edeque.stream_and_destroy(ets) |> Enum.to_list() |> IO.inspect()
   :edeque.destroy(ets)
   """
 
   def new do
-    ets = :ets.new(:deque, [:ordered_set, :protected])
-    c = :counters.new(3, [:write_concurrency])
+    ets = new_table()
+    c = new_counters()
     {ets, c}
   end
 
   def new(name) do
+    ets = new_table(name)
+    c = new_counters()
+    {ets, c}
+  end
+
+  def new_counters do
+    :counters.new(3, [:write_concurrency])
+  end
+
+  def new_table do
+    :ets.new(:deque, [:ordered_set, :public])
+  end
+
+  def new_table(name) do
     ets =
       :ets.new(name, [
         :ordered_set,
@@ -59,6 +73,9 @@ defmodule :edeque do
     :ets.foldr(fn {_k, v}, acc -> fun.(v, acc) end, acc, ets)
   end
 
+  @doc """
+  Returns a stream of values in the deque
+  """
   def stream(ets) do
     Stream.resource(
       fn -> :ets.first(ets) end,
@@ -87,6 +104,12 @@ defmodule :edeque do
 
   def flush(ets, c) do
     :ets.delete_all_objects(ets)
+    :counters.put(c, 1, 0)
+    :counters.put(c, 2, 0)
+    :counters.put(c, 3, 0)
+  end
+
+  def reset_counters(c) do
     :counters.put(c, 1, 0)
     :counters.put(c, 2, 0)
     :counters.put(c, 3, 0)
