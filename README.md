@@ -1,20 +1,22 @@
 # Poolder
 
-A compile-time builder that generates a concurrent pool of worker processes and schedulers for parallel task execution.
+A compile-time builder that generates a concurrent pool of worker processes, batchers and schedulers for parallel task execution.
+
 
 ### Features
 - **Fixed Pool Size**: Define the number of workers at compile time.
 - **Scheduled Tasks**: Define recurring jobs at compile time.
 - **Runtime Rescheduling**: Create, reconfigure, or cancel scheduled tasks dynamically.
+- **Batch Processing**: Aggregate and process multiple tasks in batches.
+
 
 ## Installation
-
 The package can be installed by adding `poolder` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
   [
-    {:poolder, "~> 0.1.4"}
+    {:poolder, "~> 0.1.5"}
   ]
 end
 ```
@@ -32,7 +34,7 @@ end
 ```elixir
 defmodule MyPool do
   use Poolder.Worker,
-    # pool name
+    # pool unique name
     name: :mypool,
     # number of workers
     pool_size: 10,
@@ -118,7 +120,9 @@ end
 def MyApp.Application do
   def start(_type, _args) do
     children = [
-      {MyPool, []}
+      MyPool,
+      MyJobs,
+      MyBatcher
     ]
 
     opts = [strategy: :one_for_one, name: MyApp.Supervisor]
@@ -183,6 +187,43 @@ defmodule MyJobs do
       :ok
     end
 end
+```
+
+
+## Building a batcher
+```elixir
+defmodule Batcher do
+  use Poolder.Batcher,
+    # batcher unique name
+    name: :batcher,
+    # batch size
+    limit: 100,
+    # batch timeout (it will flush the batch after this time)
+    timeout: 10_000,
+    # reverse the batch order
+    reverse: false,
+    # retry options
+    retry: [count: 3, backoff: 1000]
+
+  @impl true
+  def handle_init(state) do
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_batch(batch, _state) do
+    IO.inspect(batch, label: "batch")
+  end
+end
+
+# usage
+{:ok, pid} = Batcher.start_link([])
+Batcher.push(pid, :yellow)
+Batcher.push(pid, "Amsterdam")
+Batcher.push(pid, ["orange", "apple", "watermelon"])
+Batcher.push_many(pid, Enum.to_list(1..10))
+Batcher.push_many(pid, [1, :cool, 5])
+Batcher.force_flush(pid)
 ```
 
 ## License
