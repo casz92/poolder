@@ -1,13 +1,12 @@
-defmodule Poolder do
+defmodule Poolder.Worker do
   defmacro __using__(opts) do
-    pool_name = Keyword.fetch!(opts, :pool)
+    name = Keyword.fetch!(opts, :name)
     pool_size = Keyword.get(opts, :pool_size, 1)
     retry = Keyword.get(opts, :retry, count: 0, backoff: 0)
     retries = Keyword.get(retry, :count)
     backoff = Keyword.get(retry, :backoff, 0)
     callbacks = Keyword.get(opts, :callback, [])
     mode = Keyword.get(opts, :mode, :round_robin)
-    schedules = Keyword.get(opts, :schedules, [])
 
     replies =
       for {call, {mod, fun}} <- callbacks do
@@ -20,24 +19,22 @@ defmodule Poolder do
       end
 
     quote bind_quoted: [
-            pool_name: pool_name,
+            name: name,
             pool_size: pool_size,
             retries: retries,
             backoff: backoff,
             mode: mode,
-            schedules: schedules,
             replies: replies
           ] do
       use GenServer
 
-      @pool pool_name
+      @pool name
       @pool_size pool_size
       @retries retries
       @backoff backoff
       @catcher @retries > 0
       @supervisor __MODULE__.Supervisor
       @mode mode
-      @schedules schedules
       @max_index @pool_size - 1
       @range 0..@max_index
       @call_timeout 5000
@@ -65,9 +62,7 @@ defmodule Poolder do
       def start_pool(_opts) do
         children =
           [
-            {Registry, keys: :unique, name: @pool},
-            {Poolder.Scheduler,
-             schedules: @schedules, name: via_tuple(:scheduler), mod: __MODULE__}
+            {Registry, keys: :unique, name: @pool}
           ] ++
             for i <- @range, do: {__MODULE__, id: i}
 
@@ -89,7 +84,7 @@ defmodule Poolder do
       defp via_tuple(id), do: {:via, Registry, {@pool, id}}
 
       @compile {:inline, try_execute: 3, reply: 3}
-      @behaviour Poolder.Behaviour
+      @behaviour Poolder.Worker
 
       def start_link(id) do
         GenServer.start_link(__MODULE__, id, name: via_tuple(id))
@@ -285,15 +280,24 @@ defmodule Poolder do
         def handle_error(_data, _attempt, _error, state), do: {:retry, state}
       end
 
-      def handle_periodic_job(_task), do: :ok
-
       def handle_pool_ready(_pid), do: :ok
 
       defoverridable handle_init: 1,
                      handle_job: 2,
                      handle_error: 4,
-                     handle_periodic_job: 1,
                      handle_pool_ready: 1
     end
   end
+
+  ## Behaviour
+  @callback handle_init(id :: integer()) :: {:ok, state :: any()}
+  @callback handle_pool_ready(supervisor_pid :: pid()) :: any()
+  @callback handle_job(data :: any(), state :: any()) ::
+              {:noreply, state :: any()}
+              | {:push, any(), any(), state :: any()}
+              | {:reply, reply :: any(), state :: any()}
+              | {:stop, reason :: any(), state :: any()}
+              | {:exit, reason :: any(), state :: any()}
+  @callback handle_error(data :: any(), attempt :: integer(), error :: any(), state :: any()) ::
+              {:retry, state :: any()} | {:delay, integer()} | :halt
 end

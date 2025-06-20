@@ -1,8 +1,9 @@
 # Poolder
 
-A compile-time builder that generates a concurrent pool of worker processes for parallel task execution.
+A compile-time builder that generates a concurrent pool of worker processes and schedulers for parallel task execution.
 
-### Optional Features `schedules`
+### Features
+- **Fixed Pool Size**: Define the number of workers at compile time.
 - **Scheduled Tasks**: Define recurring jobs at compile time.
 - **Runtime Rescheduling**: Create, reconfigure, or cancel scheduled tasks dynamically.
 
@@ -13,7 +14,7 @@ The package can be installed by adding `poolder` to your list of dependencies in
 ```elixir
 def deps do
   [
-    {:poolder, "~> 0.1.3"}
+    {:poolder, "~> 0.1.4"}
   ]
 end
 ```
@@ -30,19 +31,14 @@ end
 ### Building a pool
 ```elixir
 defmodule MyPool do
-  use Poolder,
+  use Poolder.Worker,
     # pool name
-    pool: :mypool,
+    name: :mypool,
     # number of workers
     pool_size: 10,
     retry: [count: 5, backoff: 1000],
     # :round_robin | :random | :monotonic | :phash | :broadcast
     mode: :round_robin,
-    # list of scheduled jobs
-    schedules: [
-      {:every_ten_seconds, :timer.seconds(10)},
-      {:pruner, :timer.hours(1)}
-    ],
     # list of custom callbacks
     callback: [
       event: {EventBus, :notify},
@@ -108,18 +104,6 @@ defmodule MyPool do
     end
   end
 
-  ## Schedulers
-  @impl true
-  def handle_periodic_job(event) do
-    Logger.info("Periodic job: #{inspect(event)}")
-    # if return {:set, :timer.hours(2)} change scheduler interval
-    # if return {:set, :new_scheduler_name, :timer.hours(2)} create a new scheduled job
-    # if return :stop, stop all scheduled jobs
-    # if return :exit, stop current scheduled job
-    # any other return value continue the scheduled job
-    :ok
-  end
-
   ## Private functions
   defp heavy_work(message) do
     # do something heavy
@@ -160,6 +144,44 @@ size = MyPool.size()
 for i <- 0..size-1 do
   pid = MyPool.pid(i)
   MyPool.cast(pid, {:hardwork, message})
+end
+```
+
+### Scheduling jobs
+```elixir
+defmodule MyJobs do
+    use Poolder.Scheduler,
+    name: :myjobs,
+    jobs: [
+      # cron style or interval style
+      {:prune, "*/15 * * * * *"},
+      {:update, "*/10 * * * * *"},
+      {:five_seconds, 5_000}
+    ],
+    retry: [count: 5, backoff: 1000]
+
+    def prune(_args) do
+      IO.puts "Pruning"
+    end
+
+    def update(_args) do
+      IO.puts "Updating"
+    end
+
+    def five_seconds(_args) do
+      # if return {:set, :timer.hours(2)} change scheduler interval
+      # if return {:set, :new_scheduler_name, "0 0 0 * * *"} create a new scheduled job
+      # if return :stop, stop all scheduled jobs
+      # if return :exit, stop current scheduled job
+      # any other return value continue the scheduled job
+      IO.puts "Five seconds"
+    end
+
+    @impl true
+    def handle_error(_job_name, _attempt, _error, _state) do
+      Logger.info("Periodic job: #{inspect(event)}")
+      :ok
+    end
 end
 ```
 

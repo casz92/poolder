@@ -1,14 +1,14 @@
 defmodule Poolder.MixProject do
   use Mix.Project
 
-  @version "0.1.3"
+  @version "0.1.4"
 
   def project do
     [
       app: :poolder,
       name: "Poolder",
       description:
-        "A compile-time builder that generates a concurrent pool of worker processes for parallel task execution",
+        "A compile-time builder that generates a concurrent pool of worker processes and schedulers for parallel task execution",
       source_url: "https://github.com/casz92/poolder",
       version: @version,
       elixir: "~> 1.14",
