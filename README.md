@@ -141,8 +141,9 @@ def MyApp.Application do
   def start(_type, _args) do
     children = [
       MyPool,
-      MyJobs,
-      MyBatcher
+      MyBatcher,
+      Poolder.Tasker, [name: :mytasker, limit: 5, hibernate_after: 60_000]
+      MyPeriodicJobs,
     ]
 
     opts = [strategy: :one_for_one, name: MyApp.Supervisor]
@@ -173,7 +174,7 @@ end
 
 ### Scheduling jobs
 ```elixir
-defmodule MyJobs do
+defmodule MyPeriodicJobs do
     use Poolder.Scheduler,
     name: :myjobs,
     jobs: [
@@ -183,6 +184,7 @@ defmodule MyJobs do
       {:five_seconds, 5_000}
     ],
     retry: [count: 5, backoff: 1000],
+    hibernate_after: 60_000,
     # :low | :normal | :high | :max
     priority: :low
 
@@ -286,7 +288,7 @@ end
 ```bash
 mix test test/worker_test.exs # soon
 mix test test/batch_test.exs
-mix test test/scheduler_test.exs # soon
+mix test test/scheduler_test.exs
 mix test test/tasker_test.exs
 ```
 

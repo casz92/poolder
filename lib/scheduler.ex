@@ -5,6 +5,7 @@ defmodule Poolder.Scheduler do
     retry = Keyword.get(opts, :retry, count: 0, backoff: 1000)
     retries = Keyword.get(retry, :count)
     backoff = Keyword.get(retry, :backoff, 0)
+    hibernate_after = Keyword.get(opts, :hibernate_after, :infinity)
     priority = Keyword.get(opts, :priority, 0)
 
     quote bind_quoted: [
@@ -12,6 +13,7 @@ defmodule Poolder.Scheduler do
             jobs: jobs,
             retries: retries,
             backoff: backoff,
+            hibernate_after: hibernate_after,
             priority: priority
           ] do
       @name name
@@ -19,10 +21,14 @@ defmodule Poolder.Scheduler do
       @retries retries
       @backoff backoff
       @catcher retries > 0
+      @hibernate_after hibernate_after
       @priority priority
       @priority_abnormal priority != :normal
 
-      use GenServer
+      if @jobs == [] do
+        raise "Scheduler #{name} has no jobs"
+      end
+
       @behaviour Poolder.Scheduler
 
       def child_spec(args) do
@@ -35,16 +41,19 @@ defmodule Poolder.Scheduler do
         }
       end
 
-      def start_link(args) do
-        if @jobs != [] do
-          GenServer.start_link(__MODULE__, args, name: @name)
-        else
-          :ignore
-        end
+      def start(opts \\ []) do
+        pid = spawn(__MODULE__, :run, [opts])
+        Process.register(pid, @name)
+        {:ok, pid}
       end
 
-      @impl true
-      def init(args) do
+      def start_link(opts \\ []) do
+        pid = spawn_link(__MODULE__, :run, [opts])
+        Process.register(pid, @name)
+        {:ok, pid}
+      end
+
+      def run(opts) do
         trefs =
           for {key, interval} <- @jobs, into: %{} do
             {
@@ -53,35 +62,59 @@ defmodule Poolder.Scheduler do
             }
           end
 
-        {:ok, %{jobs: Map.new(@jobs), trefs: trefs, args: args}}
+        args = %{jobs: Map.new(@jobs), trefs: trefs, opts: opts}
+        loop(args)
       end
 
-      @impl true
-      def handle_info({:kill, key}, state) do
+      def loop(state, hibernate_after \\ @hibernate_after) do
+        receive do
+          {:kill, key} ->
+            handle_info({:kill, key}, state)
+
+          {:set, key, interval} ->
+            handle_info({:set, key, interval}, state)
+
+          {:timeout, key} ->
+            handle_info({:timeout, key}, state)
+
+          {:retry_job, key, attempt} ->
+            handle_info({:retry_job, key, attempt}, state)
+
+          _ ->
+            :ignore
+        after
+          hibernate_after ->
+            handle_hibernate(state)
+            :erlang.hibernate(__MODULE__, :loop, [state])
+        end
+      end
+
+      defp handle_info({:kill, key}, state) do
         tref = Map.get(state.trefs, key)
         cancel_timer(tref)
-        {:noreply, %{state | trefs: Map.delete(state.trefs, key)}}
+        loop(%{state | trefs: Map.delete(state.trefs, key)})
       end
 
-      def handle_info({:set, key, interval}, state) do
+      defp handle_info({:set, key, interval}, state) do
         tref = Map.get(state.trefs, key)
         cancel_timer(tref)
         tref = send_after(key, interval)
-        {:noreply, %{state | trefs: Map.put(state.trefs, key, tref)}}
+        loop(%{state | trefs: Map.put(state.trefs, key, tref)})
       end
 
-      def handle_info({:timeout, key}, state = %{jobs: jobs, trefs: trefs}) do
+      defp handle_info({:timeout, key}, state = %{jobs: jobs, trefs: trefs}) do
         pid = self()
         interval = Map.get(jobs, key)
         tref = send_after(key, interval)
 
         spawn_link(__MODULE__, :try_run, [pid, key, 1, state])
 
-        {:noreply, %{state | trefs: Map.put(trefs, key, tref)}}
+        loop(%{state | trefs: Map.put(trefs, key, tref)})
       end
 
-      def handle_info({:retry_job, key, attempt}, state) do
+      defp handle_info({:retry_job, key, attempt}, state) do
         try_run(self(), key, attempt, state)
+        loop(state)
       end
 
       ## Public API
@@ -93,7 +126,7 @@ defmodule Poolder.Scheduler do
         send(__MODULE__, {:set, task, interval})
       end
 
-      def try_run(pid, key, attempt, state) do
+      def try_run(pid, key, attempt, state) when attempt <= @retries do
         try do
           if @priority_abnormal, do: :erlang.process_flag(:priority, @priority)
 
@@ -111,30 +144,28 @@ defmodule Poolder.Scheduler do
               send(pid, {:kill, key})
 
             :stop ->
-              GenServer.stop(pid, :normal)
+              Process.exit(pid, :normal)
 
             _ ->
               :ok
           end
         rescue
           error ->
-            (@catcher and
-               case handle_error(key, attempt, error, state) do
-                 {:retry, new_state} ->
-                   try_run(pid, key, attempt + 1, new_state)
+            @catcher and
+              case handle_error(key, attempt, error, state) do
+                {:retry, new_state} ->
+                  try_run(pid, key, attempt + 1, new_state)
 
-                 {:backoff, delay} ->
-                   Process.send_after(pid, {:retry_job, key, attempt + 1}, delay)
-                   {:noreply, state}
+                {:backoff, delay} ->
+                  Process.send_after(pid, {:retry_job, key, attempt + 1}, delay)
 
-                 :halt ->
-                   {:noreply, state}
-
-                 _ ->
-                   {:noreply, state}
-               end) || {:noreply, state}
+                _ ->
+                  :ok
+              end
         end
       end
+
+      def try_run(_pid, _key, _attempt, _state), do: :ok
 
       if @backoff > 0 do
         def handle_error(_key, _attempt, _error, state), do: {:backoff, @backoff}
@@ -142,7 +173,9 @@ defmodule Poolder.Scheduler do
         def handle_error(_key, _attempt, _error, state), do: {:retry, state}
       end
 
-      defoverridable stop: 1, schedule: 2, handle_error: 4
+      def handle_hibernate(_state), do: :ok
+
+      defoverridable stop: 1, schedule: 2, handle_error: 4, handle_hibernate: 1
 
       ## Private API
       defp cancel_timer(nil), do: :ok
@@ -180,6 +213,8 @@ defmodule Poolder.Scheduler do
       defp next_interval(_), do: :error
     end
   end
+
+  @callback handle_hibernate(state :: any) :: any
 
   @callback handle_error(job :: term, attempt :: integer, error :: any, state :: any) ::
               {:retry, new_state :: any}
