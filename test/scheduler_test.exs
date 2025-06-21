@@ -35,8 +35,8 @@ defmodule TestTasker do
     end
 
     @impl true
-    def handle_error(job_name, _attempt, _error, state) do
-      IO.puts("Periodic job - handle_error: #{inspect(job_name)}")
+    def handle_error(job_name, _attempt, error, state) do
+      IO.puts("Periodic job - handle_error: #{inspect(job_name)} - #{inspect(error.message)}")
       {:retry, state}
     end
   end

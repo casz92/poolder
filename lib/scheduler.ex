@@ -159,7 +159,7 @@ defmodule Poolder.Scheduler do
                 {:backoff, delay} ->
                   Process.send_after(pid, {:retry_job, key, attempt + 1}, delay)
 
-                _ ->
+                _halt ->
                   :ok
               end
         end
