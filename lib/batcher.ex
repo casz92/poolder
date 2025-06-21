@@ -8,6 +8,7 @@ defmodule Poolder.Batcher do
     retries = Keyword.get(retry, :count)
     backoff = Keyword.get(retry, :backoff, 0)
     hibernate_after = Keyword.get(opts, :hibernate_after, :infinity)
+    priority = Keyword.get(opts, :priority, :normal)
 
     quote bind_quoted: [
             name: name,
@@ -16,7 +17,8 @@ defmodule Poolder.Batcher do
             batch_reverse: batch_reverse,
             retries: retries,
             backoff: backoff,
-            hibernate_after: hibernate_after
+            hibernate_after: hibernate_after,
+            priority: priority
           ] do
       @name name
       @batch_limit batch_limit
@@ -26,6 +28,7 @@ defmodule Poolder.Batcher do
       @backoff backoff
       @infinity batch_timeout == :infinity
       @hibernate_after hibernate_after
+      @priority priority
 
       @behaviour Poolder.Batcher
       @compile {:inline, add: 3}
@@ -62,14 +65,10 @@ defmodule Poolder.Batcher do
       def run(opts) do
         {t, c} = :edeque.new()
 
-        # case handle_init(opts) do
-        #   :ignore ->
-        #     :ok
+        if @priority != :normal do
+          Process.flag(:priority, @priority)
+        end
 
-        #   _ ->
-        #     # Process.register(self(), __MODULE__)
-        #     loop(t, c)
-        # end
         handle_init(opts)
         loop(t, c, nil)
       end

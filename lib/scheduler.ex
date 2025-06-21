@@ -5,13 +5,22 @@ defmodule Poolder.Scheduler do
     retry = Keyword.get(opts, :retry, count: 0, backoff: 1000)
     retries = Keyword.get(retry, :count)
     backoff = Keyword.get(retry, :backoff, 0)
+    priority = Keyword.get(opts, :priority, 0)
 
-    quote bind_quoted: [name: name, jobs: jobs, retries: retries, backoff: backoff] do
+    quote bind_quoted: [
+            name: name,
+            jobs: jobs,
+            retries: retries,
+            backoff: backoff,
+            priority: priority
+          ] do
       @name name
       @jobs jobs
       @retries retries
       @backoff backoff
       @catcher retries > 0
+      @priority priority
+      @priority_abnormal priority != :normal
 
       use GenServer
       @behaviour Poolder.Scheduler
@@ -86,6 +95,8 @@ defmodule Poolder.Scheduler do
 
       def try_run(pid, key, attempt, state) do
         try do
+          if @priority_abnormal, do: :erlang.process_flag(:priority, @priority)
+
           case :erlang.apply(__MODULE__, key, [state]) do
             {:set, new_interval} ->
               send(pid, {:set, key, new_interval})

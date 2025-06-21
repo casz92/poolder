@@ -7,6 +7,7 @@ defmodule Poolder.Worker do
     backoff = Keyword.get(retry, :backoff, 0)
     callbacks = Keyword.get(opts, :callback, [])
     mode = Keyword.get(opts, :mode, :round_robin)
+    priority = Keyword.get(opts, :priority, :normal)
 
     replies =
       for {call, {mod, fun}} <- callbacks do
@@ -24,7 +25,8 @@ defmodule Poolder.Worker do
             retries: retries,
             backoff: backoff,
             mode: mode,
-            replies: replies
+            replies: replies,
+            priority: priority
           ] do
       use GenServer
 
@@ -38,6 +40,8 @@ defmodule Poolder.Worker do
       @max_index @pool_size - 1
       @range 0..@max_index
       @call_timeout 5000
+      @priority priority
+      @priority_abnormal priority != :normal
 
       def child_spec(id: worker_id) do
         %{
@@ -73,7 +77,7 @@ defmodule Poolder.Worker do
 
         case Supervisor.start_link(Poolder.Supervisor, children, name: @supervisor) do
           {:ok, pid} ->
-            __MODULE__.handle_pool_ready(pid)
+            __MODULE__.handle_ready(pid)
             {:ok, pid}
 
           error ->
@@ -93,6 +97,9 @@ defmodule Poolder.Worker do
       @impl true
       def init(id) do
         :persistent_term.put({@pool, id}, self())
+
+        if @priority_abnormal, do: Process.flag(:priority, @priority)
+
         handle_init(id)
       end
 
@@ -280,18 +287,18 @@ defmodule Poolder.Worker do
         def handle_error(_data, _attempt, _error, state), do: {:retry, state}
       end
 
-      def handle_pool_ready(_pid), do: :ok
+      def handle_ready(_pid), do: :ok
 
       defoverridable handle_init: 1,
                      handle_job: 2,
                      handle_error: 4,
-                     handle_pool_ready: 1
+                     handle_ready: 1
     end
   end
 
   ## Behaviour
   @callback handle_init(id :: integer()) :: {:ok, state :: any()}
-  @callback handle_pool_ready(supervisor_pid :: pid()) :: any()
+  @callback handle_ready(supervisor_pid :: pid()) :: any()
   @callback handle_job(data :: any(), state :: any()) ::
               {:noreply, state :: any()}
               | {:push, any(), any(), state :: any()}

@@ -30,14 +30,15 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
 
 ## Callbacks
 ### Workers callbacks
-- `handle_init/1`: Initializes the pool state.
-- `handle_pool_ready/1`: Notifies when the pool is ready.
+- `handle_init/1`: Initializes the worker state.
+- `handle_ready/1`: Notifies when the pool is ready.
 - `handle_job/2`: Handles the job execution.
 - `handle_error/4`: Handles job errors.
 
 ### Batcher callbacks
 - `handle_init/1`: Initializes the batcher state.
 - `handle_batch/2`: Handles the batch processing.
+- `handle_hibernate/1`: Handles before hibernate.
 
 ### Scheduler callbacks
 - `handle_init/1`: Initializes the scheduler state.
@@ -58,6 +59,8 @@ defmodule MyPool do
     retry: [count: 5, backoff: 1000],
     # :round_robin | :random | :monotonic | :phash | :broadcast
     mode: :round_robin,
+    # Priority queue (low, normal, high, max)
+    priority: :normal,
     # list of custom callbacks
     callback: [
       event: {EventBus, :notify},
@@ -74,7 +77,7 @@ defmodule MyPool do
   end
 
   @impl true
-  def handle_pool_ready(sup_pid) do
+  def handle_ready(sup_pid) do
     Logger.info("Pool ready with supervisor #{inspect(sup_pid)}")
   end
 
@@ -179,7 +182,9 @@ defmodule MyJobs do
       {:update, "*/10 * * * * *"},
       {:five_seconds, 5_000}
     ],
-    retry: [count: 5, backoff: 1000]
+    retry: [count: 5, backoff: 1000],
+    # :low | :normal | :high | :max
+    priority: :low
 
     def prune(_args) do
       IO.puts "Pruning"
@@ -222,7 +227,9 @@ defmodule Batcher do
     # retry options
     retry: [count: 3, backoff: 1000],
     # hibernate after this time in milliseconds or :infinity
-    hibernate_after: 600_000
+    hibernate_after: 600_000,
+    # :low | :normal | :high | :max
+    priority: :high
 
   @impl true
   def handle_init(state) do
@@ -278,7 +285,7 @@ end
 ## Testing
 ```bash
 mix test test/worker_test.exs # soon
-mix test test/batcher_test.exs
+mix test test/batch_test.exs
 mix test test/scheduler_test.exs # soon
 mix test test/tasker_test.exs
 ```
