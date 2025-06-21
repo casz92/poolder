@@ -1,4 +1,7 @@
 # Poolder
+![Version](https://img.shields.io/badge/version-0.1.7-blue.svg)
+![Status](https://img.shields.io/badge/status-active-green.svg)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
 A compile-time builder that generates a concurrent pool of worker processes, batchers and schedulers for parallel task execution.
 
@@ -20,7 +23,7 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
 
 ## Features
 - **Fixed Pool Size**: Define the number of workers at compile time.
-- **Scheduled Tasks**: Define recurring jobs at compile time.
+- **Scheduled Tasks**: Define recurring jobs at compile time with cron-style or intervals.
 - **Runtime Rescheduling**: Create, reconfigure, or cancel scheduled tasks dynamically.
 - **Batch Processing**: Aggregate and process multiple tasks in batches.
 - **Tasker**: A simple task executor for concurrent processing with limited concurrency.
