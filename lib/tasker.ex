@@ -55,18 +55,18 @@ defmodule Poolder.Tasker do
   def await(list, timeout \\ 5000) do
     total = Enum.count(list)
 
-    wait_loop(total, timeout, [])
+    await_loop(total, timeout, [])
   end
 
-  defp wait_loop(0, _timeout, _acc), do: []
+  defp await_loop(0, _timeout, _acc), do: []
 
-  defp wait_loop(total, timeout, acc) do
+  defp await_loop(total, timeout, acc) do
     if Enum.count(acc) >= total do
       Enum.reverse(acc)
     else
       receive do
         {:tresult, result} ->
-          wait_loop(total, timeout, [result | acc])
+          await_loop(total, timeout, [result | acc])
       after
         timeout ->
           Enum.reverse(acc)

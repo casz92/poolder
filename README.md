@@ -264,7 +264,7 @@ Batcher.flush(pid) # force processing if batch is not full
 
 ## Tasker
 ```elixir
-{:ok, pid} = Tasker.start_link(name: :mytaker, limit: 2, hibernate_after: 60_000)
+{:ok, pid} = Tasker.start_link(name: :mytasker, limit: 2, hibernate_after: 60_000)
 
 results =
   for i <- 1..100 do

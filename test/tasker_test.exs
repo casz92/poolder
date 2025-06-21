@@ -4,7 +4,7 @@ defmodule TestTasker do
   alias Poolder.Tasker
 
   test "execute 10 tasks awaited with Tasker" do
-    {:ok, pid} = Tasker.start_link(name: :mytaker, limit: 2, hibernate_after: 60_000)
+    {:ok, pid} = Tasker.start_link(name: :mytasker, limit: 2, hibernate_after: 60_000)
 
     range = 1..10
 
@@ -23,7 +23,7 @@ defmodule TestTasker do
   end
 
   test "execute 100 tasks asynchronously with Tasker" do
-    {:ok, pid} = Tasker.start_link(name: :mytaker, limit: 2)
+    {:ok, pid} = Tasker.start_link(name: :mytasker, limit: 2)
 
     range = 1..10
 
