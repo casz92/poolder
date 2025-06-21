@@ -25,7 +25,7 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
 - **Fixed Pool Size**: Define the number of workers at compile time.
 - **Scheduled Tasks**: Define recurring jobs at compile time with cron-style or intervals.
 - **Runtime Rescheduling**: Create, reconfigure, or cancel scheduled tasks dynamically.
-- **Batch Processing**: Aggregate and process multiple tasks in batches.
+- **Batch Processing**: Aggregate and process multiple messages in batches.
 - **Tasker**: A simple task executor for concurrent processing with limited concurrency.
 
 ## Callbacks
@@ -243,7 +243,8 @@ defmodule Batcher do
   end
 
   @impl true
-  def handle_batch(batch, _state) do
+  def handle_batch(batch_stream, _state) do
+    batch = Enum.to_list(batch_stream)
     IO.inspect(batch, label: "batch")
   end
 
@@ -291,6 +292,7 @@ end
 ## Testing
 ```bash
 mix test test/worker_test.exs # soon
+mix test test/factory_pool_test.exs
 mix test test/batch_test.exs
 mix test test/scheduler_test.exs
 mix test test/tasker_test.exs

@@ -1,4 +1,4 @@
-defmodule Poolder.DynamicSup do
+defmodule Poolder.DynamicSupervisor do
   use DynamicSupervisor
 
   def start_link(name, opts) do
