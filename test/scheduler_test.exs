@@ -39,6 +39,11 @@ defmodule TestTasker do
       IO.puts("Periodic job - handle_error: #{inspect(job_name)} - #{inspect(error.message)}")
       {:retry, state}
     end
+
+    @impl true
+    def handle_hibernate(state) do
+      IO.puts("Periodic job - handle_hibernate")
+    end
   end
 
   test "periodic jobs" do

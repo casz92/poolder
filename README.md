@@ -44,7 +44,7 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
 - `handle_init/1`: Initializes the scheduler state.
 - `handle_job/2`: Handles the job execution.
 - `handle_error/4`: Handles job errors.
-
+- `handle_hibernate/1`: Handles before hibernate.
 
 ## Usage
 
@@ -142,8 +142,8 @@ def MyApp.Application do
     children = [
       MyPool,
       MyBatcher,
-      Poolder.Tasker, [name: :mytasker, limit: 5, hibernate_after: 60_000]
-      MyPeriodicJobs,
+      Poolder.Tasker, [name: :mytasker, limit: 5, hibernate_after: 60_000],
+      MyPeriodicJobs
     ]
 
     opts = [strategy: :one_for_one, name: MyApp.Supervisor]
@@ -207,8 +207,12 @@ defmodule MyPeriodicJobs do
 
     @impl true
     def handle_error(_job_name, _attempt, _error, _state) do
-      Logger.info("Periodic job: #{inspect(event)}")
-      :ok
+      IO.puts("Periodic job: #{inspect(event)}")
+    end
+
+    @impl true
+    def handle_hibernate(state) do
+      IO.puts("Periodic job - handle_hibernate")
     end
 end
 ```
