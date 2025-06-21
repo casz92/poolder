@@ -4,6 +4,8 @@ defmodule Poolder.Batcher do
     batch_limit = Keyword.get(opts, :limit, 5)
     batch_timeout = Keyword.get(opts, :timeout, :infinity)
     batch_reverse = Keyword.get(opts, :reverse, false)
+    batch_indexed = Keyword.get(opts, :indexed, false)
+    stream = Keyword.get(opts, :stream, true)
     retry = Keyword.get(opts, :retry, count: 0, backoff: 0)
     retries = Keyword.get(retry, :count)
     backoff = Keyword.get(retry, :backoff, 0)
@@ -15,6 +17,8 @@ defmodule Poolder.Batcher do
             batch_limit: batch_limit,
             batch_timeout: batch_timeout,
             batch_reverse: batch_reverse,
+            batch_indexed: batch_indexed,
+            stream: stream,
             retries: retries,
             backoff: backoff,
             hibernate_after: hibernate_after,
@@ -24,14 +28,18 @@ defmodule Poolder.Batcher do
       @batch_limit batch_limit
       @batch_timeout batch_timeout
       @batch_reverse batch_reverse
+      @batch_indexed batch_indexed
+      @stream stream
       @retries retries
       @backoff backoff
       @infinity batch_timeout == :infinity
       @hibernate_after hibernate_after
       @priority priority
 
+      @result_fun if @stream, do: &:edeque.stream/3, else: &:edeque.to_list/3
+
       @behaviour Poolder.Batcher
-      @compile {:inline, add: 3}
+      @compile {:inline, add: 4}
 
       if @hibernate_after <= @batch_timeout do
         raise ArgumentError, "#{__MODULE__} hibernate_after must be greater than batch_timeout"
@@ -81,6 +89,18 @@ defmodule Poolder.Batcher do
         send(pid, {:push, item})
       end
 
+      def push_front(pid, item) do
+        send(pid, {:first, item})
+      end
+
+      def push_front(item) do
+        send(__MODULE__, {:first, item})
+      end
+
+      def pop_at(pid, index) do
+        send(pid, {:pop, index})
+      end
+
       def flush() do
         send(__MODULE__, :flush)
       end
@@ -89,10 +109,10 @@ defmodule Poolder.Batcher do
         send(pid, :flush)
       end
 
-      def loop(t, c, tref) do
+      def loop(t, c, tref, hibernate_after \\ @hibernate_after) do
         receive do
-          {:push, item} ->
-            add(t, c, item)
+          {x, item} ->
+            add(x, t, c, item)
 
             case :edeque.size(c) do
               1 ->
@@ -118,10 +138,14 @@ defmodule Poolder.Batcher do
           _ ->
             loop(t, c, tref)
         after
-          @hibernate_after ->
+          hibernate_after ->
             handle_hibernate({t, c, tref})
             :erlang.hibernate(__MODULE__, :loop, [t, c, tref])
         end
+      end
+
+      defp do_result(t, c) do
+        @result_fun.(t, c, reverse: @batch_reverse, indexed: @batch_indexed)
       end
 
       defp flush(t, c, tref) do
@@ -131,9 +155,9 @@ defmodule Poolder.Batcher do
           loop(t, c, tref)
         else
           pid = self()
-          stream = :edeque.stream(t)
+          messages = do_result(t, c)
           state = %{table: t}
-          spawn_link(__MODULE__, :try_handle_batch, [pid, stream, 1, state])
+          spawn_link(__MODULE__, :try_handle_batch, [pid, messages, 1, state])
           :edeque.reset_counters(c)
           loop(:edeque.new_table(), c, tref)
         end
@@ -149,16 +173,19 @@ defmodule Poolder.Batcher do
 
       defp cancel_timer(tref) do
         Process.cancel_timer(tref)
+        nil
       end
 
-      if @batch_reverse do
-        defp add(t, c, item) do
-          :edeque.push_front(t, c, item)
-        end
-      else
-        defp add(t, c, item) do
-          :edeque.push(t, c, item)
-        end
+      defp add(:push, t, c, item) do
+        :edeque.push(t, c, item)
+      end
+
+      defp add(:first, t, c, item) do
+        :edeque.push_front(t, c, item)
+      end
+
+      defp add(:pop, t, c, index) do
+        :edeque.pop_at(t, c, index)
       end
 
       def handle_init(state), do: {:ok, state}

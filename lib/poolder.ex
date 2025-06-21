@@ -1,5 +1,5 @@
 defmodule Poolder do
-    @moduledoc """
-    Documentation for `Poolder`.
-    """
+  @moduledoc """
+  Documentation for `Poolder`.
+  """
 end

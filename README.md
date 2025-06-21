@@ -230,6 +230,10 @@ defmodule Batcher do
     timeout: 10_000,
     # reverse the batch order, fifo (default) or lifo (true)
     reverse: false,
+    # retrive the batch as a stream or list
+    stream: true,
+    # result with indexs {index, value}
+    indexed: false,
     # retry options
     retry: [count: 3, backoff: 1000],
     # hibernate after this time in milliseconds or :infinity
@@ -258,7 +262,9 @@ end
 {:ok, pid} = Batcher.start_link([])
 Batcher.push(pid, :yellow)
 Batcher.push(:mybatcher, 5)
-Batcher.push(pid, "Amsterdam")
+Batcher.push_front(pid, "Amsterdam")
+Batcher.push(pid, ["red", "blue", "green"])
+Batcher.pop_at(pid, 2)
 Batcher.push(pid, ["orange", "apple", "watermelon"])
 Batcher.flush(pid) # force processing if batch is not full
 ```

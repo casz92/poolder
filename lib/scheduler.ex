@@ -184,7 +184,7 @@ defmodule Poolder.Scheduler do
       defp send_after(key, interval) do
         case next_interval(interval) do
           :error ->
-            :ignore
+            nil
 
           next_interval ->
             Process.send_after(self(), {:timeout, key}, next_interval)
