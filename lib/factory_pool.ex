@@ -25,9 +25,9 @@ defmodule Poolder.FactoryPool do
   # :set — {pid, group}
   @pid_table __MODULE__.PidTable
 
-  def child_spec(_opts) do
+  def child_spec(opts) do
     %{
-      id: __MODULE__,
+      id: opts[:id] || __MODULE__,
       start: {__MODULE__, :start_link, []},
       type: :worker,
       restart: :transient,
@@ -39,8 +39,12 @@ defmodule Poolder.FactoryPool do
   def start_link do
     :ets.new(@group_table, [:named_table, :bag, :public, read_concurrency: true])
     :ets.new(@pid_table, [:named_table, :set, :public, read_concurrency: true])
-    Poolder.FactoryPool.Monitor.start_link([])
-    :ignore
+
+    case Poolder.FactoryPool.Monitor.start_link([]) do
+      {:ok, _} -> :ignore
+      {:error, {:already_started, _}} -> :ignore
+      error -> error
+    end
   end
 
   @doc "Starts a worker process under a group and tracks it in ETS"
@@ -76,10 +80,12 @@ defmodule Poolder.FactoryPool do
 
   @doc "Terminates all child processes in a group and removes their ETS references"
   def terminate_group(group) do
+    sup = via_supervisor(group)
+
     :ets.lookup(@group_table, group)
     |> Enum.each(fn {^group, pid} ->
       :ets.delete(@pid_table, pid)
-      DynamicSupervisor.terminate_child(Poolder.DynamicSupervisor, pid)
+      DynamicSupervisor.terminate_child(sup, pid)
     end)
 
     :ets.delete(@group_table, group)
