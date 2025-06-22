@@ -41,7 +41,7 @@ defmodule TestTasker do
     end
 
     @impl true
-    def handle_hibernate(state) do
+    def handle_hibernate(_state) do
       IO.puts("Periodic job - handle_hibernate")
     end
   end

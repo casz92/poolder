@@ -1,10 +1,10 @@
 defmodule Poolder.Scheduler do
   defmacro __using__(opts) do
-    name = Keyword.get(opts, :name, __MODULE__)
+    name = Keyword.get(opts, :name)
     jobs = Keyword.get(opts, :jobs, []) |> Enum.uniq_by(&elem(&1, 0))
-    retry = Keyword.get(opts, :retry, count: 0, backoff: 1000)
+    retry = Keyword.get(opts, :retry, count: 10, backoff: 3000)
     retries = Keyword.get(retry, :count)
-    backoff = Keyword.get(retry, :backoff, 0)
+    backoff = Keyword.get(retry, :backoff, 1000)
     hibernate_after = Keyword.get(opts, :hibernate_after, :infinity)
     priority = Keyword.get(opts, :priority, 0)
 
@@ -16,7 +16,7 @@ defmodule Poolder.Scheduler do
             hibernate_after: hibernate_after,
             priority: priority
           ] do
-      @name name
+      @name name || __MODULE__
       @jobs jobs
       @retries retries
       @backoff backoff

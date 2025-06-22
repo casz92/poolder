@@ -1,6 +1,6 @@
 defmodule Poolder.Batcher do
   defmacro __using__(opts) do
-    name = Keyword.get(opts, :name, __MODULE__)
+    name = Keyword.get(opts, :name)
     batch_limit = Keyword.get(opts, :limit, 5)
     batch_timeout = Keyword.get(opts, :timeout, :infinity)
     batch_reverse = Keyword.get(opts, :reverse, false)
@@ -24,7 +24,7 @@ defmodule Poolder.Batcher do
             hibernate_after: hibernate_after,
             priority: priority
           ] do
-      @name name
+      @name name || __MODULE__
       @batch_limit batch_limit
       @batch_timeout batch_timeout
       @batch_reverse batch_reverse

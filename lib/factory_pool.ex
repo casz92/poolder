@@ -20,175 +20,189 @@ defmodule Poolder.FactoryPool do
     Poolder.FactoryPool.count(:http)
   """
 
-  # :bag — {group, pid}
-  @group_table __MODULE__.GroupTable
-  # :set — {pid, group}
-  @pid_table __MODULE__.PidTable
+  defmacro __using__(opts) do
+    name = Keyword.get(opts, :name)
+    monitor = Keyword.get(opts, :monitor, Poolder.Monitor.Default)
+    table = Keyword.get(opts, :table)
+    supervisor = Keyword.get(opts, :supervisor, Poolder.DynamicSupervisor)
+    restart = Keyword.get(opts, :restart, :transient)
+    caller = Keyword.get(opts, :caller, &GenServer.call/2)
 
-  def child_spec(opts) do
-    %{
-      id: opts[:id] || __MODULE__,
-      start: {__MODULE__, :start_link, []},
-      type: :worker,
-      restart: :transient,
-      shutdown: 500
-    }
-  end
+    quote bind_quoted: [
+            name: name,
+            monitor: monitor,
+            table: table,
+            caller: caller,
+            supervisor: supervisor,
+            restart: restart
+          ] do
+      @name name || __MODULE__
+      @table table || __MODULE__
+      # :bag — {group, pid}
+      @group_table table || Module.concat(table, GroupTable)
+      # :set — {pid, group}
+      @pid_table Module.concat(table, PidTable)
+      @caller caller
+      @supervisor supervisor
+      @restart restart
+      @monitor monitor
+      @default_group :default
 
-  @doc "Initializes ETS tables for group and pid tracking"
-  def start_link do
-    :ets.new(@group_table, [:named_table, :bag, :public, read_concurrency: true])
-    :ets.new(@pid_table, [:named_table, :set, :public, read_concurrency: true])
+      @behaviour Poolder.FactoryPool
+      alias Poolder.Ets
 
-    case Poolder.FactoryPool.Monitor.start_link([]) do
-      {:ok, _} -> :ignore
-      {:error, {:already_started, _}} -> :ignore
-      error -> error
+      def child_spec(_opts) do
+        %{
+          id: @name,
+          start: {__MODULE__, :start_link, []},
+          type: :worker,
+          restart: @restart,
+          shutdown: 500
+        }
+      end
+
+      @doc "Initializes ETS tables for group and pid tracking"
+      def start_link do
+        Ets.new(@group_table, [:bag, :public, :named_table, read_concurrency: true])
+        Ets.new(@pid_table, [:set, :public, :named_table, read_concurrency: true])
+
+        case @monitor.start_link({@group_table, @pid_table}) do
+          {:ok, pid} ->
+            {:ok, pid}
+
+          {:error, {:already_started, _pid}} ->
+            :ignore
+        end
+      end
+
+      @doc "Starts a worker process under a group and tracks it in ETS"
+      def start_child(group, {mod, args}) do
+        group = group || @default_group
+        sup_name = via_supervisor(group)
+
+        spec = %{
+          id: make_ref(),
+          start: {mod, :start_link, [args]},
+          restart: :temporary
+        }
+
+        with {:ok, pid} <- DynamicSupervisor.start_child(sup_name, spec) do
+          :ets.insert(@group_table, {group, pid})
+          :ets.insert(@pid_table, {pid, group})
+          @monitor.monitor(pid)
+          {:ok, pid}
+        end
+      end
+
+      @doc "Terminates a child process and removes its ETS references"
+      def terminate(pid) when is_pid(pid) do
+        case :ets.lookup(@pid_table, pid) do
+          [{^pid, group}] ->
+            :ets.delete_object(@group_table, {group, pid})
+            :ets.delete(@pid_table, pid)
+            DynamicSupervisor.terminate_child(via_supervisor(group), pid)
+
+          [] ->
+            {:error, :not_found}
+        end
+      end
+
+      @doc "Terminates all child processes in a group and removes their ETS references"
+      def terminate_group(group) do
+        sup = via_supervisor(group)
+
+        :ets.lookup(@group_table, group)
+        |> Enum.each(fn {^group, pid} ->
+          :ets.delete(@pid_table, pid)
+          DynamicSupervisor.terminate_child(sup, pid)
+        end)
+
+        :ets.delete(@group_table, group)
+      end
+
+      @doc "Returns a list of all active workers in the given group"
+      def list(group \\ @default_group) do
+        :ets.foldl(fn {^group, pid}, acc -> [pid | acc] end, [], @group_table)
+      end
+
+      @doc "Returns a list of all active workers and their groups"
+      def list_all do
+        :ets.foldl(fn {pid, group}, acc -> [{pid, group} | acc] end, [], @pid_table)
+      end
+
+      @doc "Returns the number of active workers in the given group"
+      def count(group \\ @default_group) do
+        :ets.lookup(@group_table, group)
+        |> Enum.count()
+      end
+
+      @doc "Returns the number of active workers in all groups"
+      def count_all do
+        :ets.info(@group_table, :size)
+      end
+
+      @doc "Sends a synchronous GenServer call to a specific pid"
+      def call(pid, msg) when is_pid(pid) do
+        @caller.(pid, msg)
+      end
+
+      @doc "Performs a guarded GenServer call to a pid under specific group"
+      def call(group, pid, msg) when is_pid(pid) do
+        case :ets.lookup(@pid_table, pid) do
+          [{^pid, ^group}] -> @caller.(pid, msg)
+          _ -> {:error, :not_found}
+        end
+      end
+
+      @doc "Sends an asynchronous message to a specific pid"
+      def cast(pid, msg) when is_pid(pid) do
+        send(pid, msg)
+        :ok
+      end
+
+      @doc "Sends a guarded asynchronous message to a pid in a group"
+      def cast(group, pid, msg) when is_pid(pid) do
+        case :ets.lookup(@pid_table, pid) do
+          [{^pid, ^group}] -> send(pid, msg)
+          _ -> {:error, :not_found}
+        end
+      end
+
+      @doc "Sends a message to all registered pids in a group"
+      def broadcast(group, msg) do
+        :ets.lookup(@group_table, group)
+        |> Enum.each(fn {^group, pid} -> send(pid, msg) end)
+      end
+
+      # Internal: creates or retrieves named DynamicSupervisor per group
+      defp via_supervisor(group) do
+        global_name = {:sup, group}
+
+        case :global.whereis_name(global_name) do
+          :undefined ->
+            {:ok, _pid} =
+              @supervisor.start_link({:global, global_name}, [])
+
+            {:global, global_name}
+
+          _pid ->
+            {:global, global_name}
+        end
+      end
     end
   end
 
-  @doc "Starts a worker process under a group and tracks it in ETS"
-  def start_child(group \\ :default, {mod, args}) do
-    sup_name = via_supervisor(group)
-
-    spec = %{
-      id: make_ref(),
-      start: {mod, :start_link, [args]},
-      restart: :temporary
-    }
-
-    with {:ok, pid} <- DynamicSupervisor.start_child(sup_name, spec) do
-      :ets.insert(@group_table, {group, pid})
-      :ets.insert(@pid_table, {pid, group})
-      Poolder.FactoryPool.Monitor.monitor(pid)
-      {:ok, pid}
-    end
-  end
-
-  @doc "Terminates a child process and removes its ETS references"
-  def terminate(pid) when is_pid(pid) do
-    case :ets.lookup(@pid_table, pid) do
-      [{^pid, group}] ->
-        :ets.delete_object(@group_table, {group, pid})
-        :ets.delete(@pid_table, pid)
-        DynamicSupervisor.terminate_child(via_supervisor(group), pid)
-
-      [] ->
-        {:error, :not_found}
-    end
-  end
-
-  @doc "Terminates all child processes in a group and removes their ETS references"
-  def terminate_group(group) do
-    sup = via_supervisor(group)
-
-    :ets.lookup(@group_table, group)
-    |> Enum.each(fn {^group, pid} ->
-      :ets.delete(@pid_table, pid)
-      DynamicSupervisor.terminate_child(sup, pid)
-    end)
-
-    :ets.delete(@group_table, group)
-  end
-
-  @doc "Returns a list of all active workers in the given group"
-  def list(group \\ :default) do
-    :ets.foldl(fn {^group, pid}, acc -> [pid | acc] end, [], @group_table)
-  end
-
-  @doc "Returns a list of all active workers and their groups"
-  def list_all do
-    :ets.foldl(fn {pid, group}, acc -> [{pid, group} | acc] end, [], @pid_table)
-  end
-
-  @doc "Returns the number of active workers in the given group"
-  def count(group \\ :default) do
-    :ets.lookup(@group_table, group)
-    |> Enum.count()
-  end
-
-  @doc "Returns the number of active workers in all groups"
-  def count_all do
-    :ets.foldl(fn {_, group}, acc -> acc + count(group) end, 0, @group_table)
-  end
-
-  @doc "Sends a synchronous GenServer call to a specific pid"
-  def call(pid, msg) when is_pid(pid) do
-    GenServer.call(pid, msg)
-  end
-
-  @doc "Performs a guarded GenServer call to a pid under specific group"
-  def call(group, pid, msg) when is_pid(pid) do
-    case :ets.lookup(@pid_table, pid) do
-      [{^pid, ^group}] -> GenServer.call(pid, msg)
-      _ -> {:error, :not_found}
-    end
-  end
-
-  @doc "Sends an asynchronous message to a specific pid"
-  def cast(pid, msg) when is_pid(pid) do
-    send(pid, msg)
-    :ok
-  end
-
-  @doc "Sends a guarded asynchronous message to a pid in a group"
-  def cast(group, pid, msg) when is_pid(pid) do
-    case :ets.lookup(@pid_table, pid) do
-      [{^pid, ^group}] -> send(pid, msg)
-      _ -> {:error, :not_found}
-    end
-  end
-
-  @doc "Sends a message to all registered pids in a group"
-  def broadcast(group, msg) do
-    :ets.lookup(@group_table, group)
-    |> Enum.each(fn {^group, pid} -> send(pid, msg) end)
-  end
-
-  # Internal: creates or retrieves named DynamicSupervisor per group
-  defp via_supervisor(group) do
-    global_name = {:sup, group}
-
-    case :global.whereis_name(global_name) do
-      :undefined ->
-        {:ok, _pid} =
-          Poolder.DynamicSupervisor.start_link({:global, global_name}, [])
-
-        {:global, global_name}
-
-      _pid ->
-        {:global, global_name}
-    end
-  end
-end
-
-defmodule Poolder.FactoryPool.Monitor do
-  use GenServer
-
-  @pid_table Poolder.FactoryPool.PidTable
-  @group_table Poolder.FactoryPool.GroupTable
-
-  def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
-
-  def init(:ok), do: {:ok, %{}}
-
-  def monitor(pid), do: GenServer.cast(__MODULE__, {:monitor, pid})
-
-  def handle_cast({:monitor, pid}, state) do
-    ref = Process.monitor(pid)
-    {:noreply, Map.put(state, ref, pid)}
-  end
-
-  def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
-    case :ets.lookup(@pid_table, pid) do
-      [{^pid, group}] ->
-        :ets.delete_object(@group_table, {group, pid})
-        :ets.delete(@pid_table, pid)
-
-      _ ->
-        :noop
-    end
-
-    {:noreply, Map.delete(state, ref)}
-  end
+  @callback start_link() :: {:ok, pid} | :ignore
+  @callback start_child(group :: atom, {module, args :: any}) :: {:ok, pid} | {:error, any}
+  @callback terminate(pid :: pid) :: :ok | {:error, any}
+  @callback terminate_group(group :: atom) :: :ok | {:error, any}
+  @callback list(group :: atom) :: [pid]
+  @callback list_all() :: [{pid, atom}]
+  @callback count(group :: atom) :: non_neg_integer
+  @callback count_all() :: non_neg_integer
+  @callback call(pid :: pid, msg :: any) :: any
+  @callback call(group :: atom, pid :: pid, msg :: any) :: any
+  @callback cast(pid :: pid, msg :: any) :: :ok
+  @callback cast(group :: atom, pid :: pid, msg :: any) :: :ok
+  @callback broadcast(group :: atom, msg :: any) :: :ok
 end

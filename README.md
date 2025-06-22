@@ -1,5 +1,5 @@
 # Poolder
-![Version](https://img.shields.io/badge/version-0.1.8-blue.svg)
+![Version](https://img.shields.io/badge/version-0.1.9-blue.svg)
 ![Status](https://img.shields.io/badge/status-active-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
@@ -17,6 +17,7 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
   - [Using pool](#using-pool)
   - [Scheduling jobs](#scheduling-jobs)
   - [Building a batcher](#building-a-batcher)
+  - [Building aFactoryPool](#building-a-factory-pool)
 - [Installation](#installation)
 - [Testing](#testing)
 - [License](#license)
@@ -25,8 +26,9 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
 - **Fixed Pool Size**: Define the number of workers at compile time.
 - **Scheduled Tasks**: Define recurring jobs at compile time with cron-style or intervals.
 - **Runtime Rescheduling**: Create, reconfigure, or cancel scheduled tasks dynamically.
-- **Batch Processing**: Aggregate and process multiple messages in batches.
+- **Batchers**: A concurrent batcher for processing lists of data.
 - **Tasker**: A simple task executor for concurrent processing with limited concurrency.
+- **FactoryPool**: A dynamic pool of workers that can be started and stopped at runtime.
 
 ## Callbacks
 ### Workers callbacks
@@ -143,7 +145,8 @@ def MyApp.Application do
       MyPool,
       MyBatcher,
       Poolder.Tasker, [name: :mytasker, limit: 5, hibernate_after: 60_000],
-      MyPeriodicJobs
+      MyPeriodicJobs,
+      WillyWonkaFactory
     ]
 
     opts = [strategy: :one_for_one, name: MyApp.Supervisor]
@@ -217,7 +220,54 @@ defmodule MyPeriodicJobs do
 end
 ```
 
-## Building a batcher
+### Building a FactoryPool
+```elixir
+defmodule WillyWonkaFactory do
+  use Poolder.FactoryPool
+end
+
+defmodule EchoWorker do
+  use GenServer
+
+  def start_link(state), do: GenServer.start_link(__MODULE__, state)
+
+  def init(state), do: {:ok, state}
+
+  def handle_call(:ping, _from, state), do: {:reply, :pong, state}
+  def handle_info({:set, new_state}, _state), do: {:noreply, new_state}
+  def handle_info(:print, state) do
+    IO.inspect(state)
+     {:noreply, state}
+  end
+end
+
+# usage
+{:ok, _factory} = WillyWonkaFactory.start_link()
+
+hersheys_group = :hersheys
+feastables_group = :feastables
+
+{:ok, milton} = WillyWonkaFactory.start_child(hersheys_group, {EchoWorker, %{initial: true}})
+{:ok, mrbeast} = WillyWonkaFactory.start_child(feastables_group, {EchoWorker, %{initial: true}})
+{:ok, nolan} = WillyWonkaFactory.start_child(feastables_group, {EchoWorker, %{initial: true}})
+WillyWonkaFactory.count(feastables_group) == 2
+
+# Send a call (should reply)
+WillyWonkaFactory.call(milton, :ping) == :pong
+
+# Send a cast (no reply expected, but should not crash)
+WillyWonkaFactory.cast(milton,{:set, %{products: ["Reese's", "Snickers", "KitKat", "Kisses"]}})
+
+# Broadcast a message
+WillyWonkaFactory.broadcast(feastables_group, {:set, %{flavors: ["Peanut Butter", "Milk Chocolate", "Cookies & creme"]}})
+
+# Check the state of the workers
+WillyWonkaFactory.cast(milton, :print)
+WillyWonkaFactory.cast(mrbeast, :print)
+WillyWonkaFactory.cast(nolan, :print)
+```
+
+### Building a batcher
 ```elixir
 defmodule Batcher do
   use Poolder.Batcher,
@@ -290,7 +340,7 @@ Add `poolder` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:poolder, "~> 0.1.8"}
+    {:poolder, "~> 0.1.9"}
   ]
 end
 ```
