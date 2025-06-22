@@ -28,7 +28,7 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
 - **Runtime Rescheduling**: Create, reconfigure, or cancel scheduled tasks dynamically.
 - **Batch message Processing**: Process multiple messages in batches.
 - **Tasker**: A simple task executor for concurrent processing with limited concurrency.
-- **FactoryPool**: A dynamic pool of workers that can be started and stopped at runtime.
+- **FactoryPool**: A dynamic pool of workers with groups that can be send messages to, started and stopped at runtime.
 
 ## Callbacks
 ### Workers callbacks

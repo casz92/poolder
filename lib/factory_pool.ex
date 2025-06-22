@@ -26,7 +26,7 @@ defmodule Poolder.FactoryPool do
     table = Keyword.get(opts, :table)
     supervisor = Keyword.get(opts, :supervisor, Poolder.DynamicSupervisor)
     restart = Keyword.get(opts, :restart, :transient)
-    caller = Keyword.get(opts, :caller, &GenServer.call/2)
+    caller = Keyword.get(opts, :caller, &GenServer.call/3)
 
     quote bind_quoted: [
             name: name,
@@ -142,14 +142,14 @@ defmodule Poolder.FactoryPool do
       end
 
       @doc "Sends a synchronous GenServer call to a specific pid"
-      def call(pid, msg) when is_pid(pid) do
-        @caller.(pid, msg)
+      def call(pid, msg, timeout \\ 5000) when is_pid(pid) do
+        @caller.(pid, msg, timeout)
       end
 
       @doc "Performs a guarded GenServer call to a pid under specific group"
-      def call(group, pid, msg) when is_pid(pid) do
+      def call(group, pid, msg, timeout) when is_pid(pid) do
         case :ets.lookup(@pid_table, pid) do
-          [{^pid, ^group}] -> @caller.(pid, msg)
+          [{^pid, ^group}] -> @caller.(pid, msg, timeout)
           _ -> {:error, :not_found}
         end
       end
@@ -200,8 +200,8 @@ defmodule Poolder.FactoryPool do
   @callback list_all() :: [{pid, atom}]
   @callback count(group :: atom) :: non_neg_integer
   @callback count_all() :: non_neg_integer
-  @callback call(pid :: pid, msg :: any) :: any
-  @callback call(group :: atom, pid :: pid, msg :: any) :: any
+  @callback call(pid :: pid, msg :: any, timeout :: integer) :: any
+  @callback call(group :: atom, pid :: pid, msg :: any, timeout :: integer) :: any
   @callback cast(pid :: pid, msg :: any) :: :ok
   @callback cast(group :: atom, pid :: pid, msg :: any) :: :ok
   @callback broadcast(group :: atom, msg :: any) :: :ok
