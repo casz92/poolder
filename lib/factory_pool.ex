@@ -20,33 +20,36 @@ defmodule Poolder.FactoryPool do
     Poolder.FactoryPool.count(:http)
   """
 
-  defmacro __using__(opts) do
+  defmacro __using__(opts \\ []) do
     name = Keyword.get(opts, :name)
     monitor = Keyword.get(opts, :monitor, Poolder.Monitor.Default)
     table = Keyword.get(opts, :table)
+    dispatcher = Keyword.get(opts, :dispatcher, [])
+    caller = Keyword.get(opts, :caller, &GenServer.call/3)
     supervisor = Keyword.get(opts, :supervisor, Poolder.DynamicSupervisor)
     restart = Keyword.get(opts, :restart, :transient)
-    caller = Keyword.get(opts, :caller, &GenServer.call/3)
 
     quote bind_quoted: [
             name: name,
             monitor: monitor,
             table: table,
-            caller: caller,
             supervisor: supervisor,
-            restart: restart
+            restart: restart,
+            dispatcher: dispatcher,
+            caller: caller
           ] do
       @name name || __MODULE__
       @table table || __MODULE__
       # :bag — {group, pid}
-      @group_table table || Module.concat(table, GroupTable)
+      @group_table Keyword.get(dispatcher, :group_table) || Module.concat(table, GroupTable)
       # :set — {pid, group}
-      @pid_table Module.concat(table, PidTable)
+      @pid_table Keyword.get(dispatcher, :pid_table) || Module.concat(table, PidTable)
+      @default_group Keyword.get(dispatcher, :default_group) || :default
+
+      @monitor monitor
       @caller caller
       @supervisor supervisor
       @restart restart
-      @monitor monitor
-      @default_group :default
 
       @behaviour Poolder.FactoryPool
       alias Poolder.Ets
@@ -120,60 +123,6 @@ defmodule Poolder.FactoryPool do
         :ets.delete(@group_table, group)
       end
 
-      @doc "Returns a list of all active workers in the given group"
-      def list(group \\ @default_group) do
-        :ets.foldl(fn {^group, pid}, acc -> [pid | acc] end, [], @group_table)
-      end
-
-      @doc "Returns a list of all active workers and their groups"
-      def list_all do
-        :ets.foldl(fn {pid, group}, acc -> [{pid, group} | acc] end, [], @pid_table)
-      end
-
-      @doc "Returns the number of active workers in the given group"
-      def count(group \\ @default_group) do
-        :ets.lookup(@group_table, group)
-        |> Enum.count()
-      end
-
-      @doc "Returns the number of active workers in all groups"
-      def count_all do
-        :ets.info(@group_table, :size)
-      end
-
-      @doc "Sends a synchronous GenServer call to a specific pid"
-      def call(pid, msg, timeout \\ 5000) when is_pid(pid) do
-        @caller.(pid, msg, timeout)
-      end
-
-      @doc "Performs a guarded GenServer call to a pid under specific group"
-      def call(group, pid, msg, timeout) when is_pid(pid) do
-        case :ets.lookup(@pid_table, pid) do
-          [{^pid, ^group}] -> @caller.(pid, msg, timeout)
-          _ -> {:error, :not_found}
-        end
-      end
-
-      @doc "Sends an asynchronous message to a specific pid"
-      def cast(pid, msg) when is_pid(pid) do
-        send(pid, msg)
-        :ok
-      end
-
-      @doc "Sends a guarded asynchronous message to a pid in a group"
-      def cast(group, pid, msg) when is_pid(pid) do
-        case :ets.lookup(@pid_table, pid) do
-          [{^pid, ^group}] -> send(pid, msg)
-          _ -> {:error, :not_found}
-        end
-      end
-
-      @doc "Sends a message to all registered pids in a group"
-      def broadcast(group, msg) do
-        :ets.lookup(@group_table, group)
-        |> Enum.each(fn {^group, pid} -> send(pid, msg) end)
-      end
-
       # Internal: creates or retrieves named DynamicSupervisor per group
       defp via_supervisor(group) do
         global_name = {:sup, group}
@@ -189,6 +138,13 @@ defmodule Poolder.FactoryPool do
             {:global, global_name}
         end
       end
+
+      if dispatcher != false do
+        use Poolder.Dispatcher,
+          group_table: @group_table,
+          pid_table: @pid_table,
+          default_group: @default_group
+      end
     end
   end
 
@@ -196,13 +152,4 @@ defmodule Poolder.FactoryPool do
   @callback start_child(group :: atom, {module, args :: any}) :: {:ok, pid} | {:error, any}
   @callback terminate(pid :: pid) :: :ok | {:error, any}
   @callback terminate_group(group :: atom) :: :ok | {:error, any}
-  @callback list(group :: atom) :: [pid]
-  @callback list_all() :: [{pid, atom}]
-  @callback count(group :: atom) :: non_neg_integer
-  @callback count_all() :: non_neg_integer
-  @callback call(pid :: pid, msg :: any, timeout :: integer) :: any
-  @callback call(group :: atom, pid :: pid, msg :: any, timeout :: integer) :: any
-  @callback cast(pid :: pid, msg :: any) :: :ok
-  @callback cast(group :: atom, pid :: pid, msg :: any) :: :ok
-  @callback broadcast(group :: atom, msg :: any) :: :ok
 end

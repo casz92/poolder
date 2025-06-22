@@ -16,7 +16,7 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
   - [Pool installation](#pool-installation)
   - [Using pool](#using-pool)
   - [Scheduling jobs](#scheduling-jobs)
-  - [Building a FactoryPool](#building-a-factory-pool)
+  - [Building a FactoryPool](#building-a-factorypool)
   - [Building a batcher](#building-a-batcher)
 - [Installation](#installation)
 - [Testing](#testing)
