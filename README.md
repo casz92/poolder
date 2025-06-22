@@ -16,8 +16,8 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
   - [Pool installation](#pool-installation)
   - [Using pool](#using-pool)
   - [Scheduling jobs](#scheduling-jobs)
-  - [Building a batcher](#building-a-batcher)
   - [Building a FactoryPool](#building-a-factory-pool)
+  - [Building a batcher](#building-a-batcher)
 - [Installation](#installation)
 - [Testing](#testing)
 - [License](#license)
@@ -26,7 +26,7 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
 - **Fixed Pool Size**: Define the number of workers at compile time.
 - **Scheduled Tasks**: Define recurring jobs at compile time with cron-style or intervals.
 - **Runtime Rescheduling**: Create, reconfigure, or cancel scheduled tasks dynamically.
-- **Batchers**: A concurrent batcher for processing lists of data.
+- **Batch message Processing**: Process multiple messages in batches.
 - **Tasker**: A simple task executor for concurrent processing with limited concurrency.
 - **FactoryPool**: A dynamic pool of workers that can be started and stopped at runtime.
 
@@ -252,10 +252,10 @@ feastables_group = :feastables
 {:ok, nolan} = WillyWonkaFactory.start_child(feastables_group, {EchoWorker, %{initial: true}})
 WillyWonkaFactory.count(feastables_group) == 2
 
-# Send a call (should reply)
+# Send a call
 WillyWonkaFactory.call(milton, :ping) == :pong
 
-# Send a cast (no reply expected, but should not crash)
+# Send a cast
 WillyWonkaFactory.cast(milton,{:set, %{products: ["Reese's", "Snickers", "KitKat", "Kisses"]}})
 
 # Broadcast a message
