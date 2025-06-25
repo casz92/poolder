@@ -1,5 +1,5 @@
 # Poolder
-![Version](https://img.shields.io/badge/version-0.1.9-blue.svg)
+![Version](https://img.shields.io/badge/version-0.1.10-blue.svg)
 ![Status](https://img.shields.io/badge/status-active-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
@@ -21,6 +21,7 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
 - [Installation](#installation)
 - [Testing](#testing)
 - [License](#license)
+- [Important Notice](#important-notice)
 
 ## Features
 - **Fixed Pool Size**: Define the number of workers at compile time.
@@ -33,9 +34,13 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
 ## Callbacks
 ### Workers callbacks
 - `handle_init/1`: Initializes the worker state.
-- `handle_ready/1`: Notifies when the pool is ready.
 - `handle_job/2`: Handles the job execution.
+- `handle_call/3`: Handles synchronous calls.
+- `handle_hibernate/1`: Handles before hibernate.
 - `handle_error/4`: Handles job errors.
+
+### Pooler callbacks
+- `handle_init/1`: Handles pool ready.
 
 ### Batcher callbacks
 - `handle_init/1`: Initializes the batcher state.
@@ -52,16 +57,13 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
 
 ### Building a pool of workers
 ```elixir
-defmodule MyPool do
+defmodule MyWorker do
   use Poolder.Worker,
-    # pool unique name
-    name: :mypool,
-    # number of workers
-    pool_size: 10,
+    # worker unique name
+    name: :myworker,
+    # retry options
     retry: [count: 5, backoff: 1000],
-    # :round_robin | :random | :monotonic | :phash | :broadcast
-    mode: :round_robin,
-    # Priority queue (low, normal, high, max)
+    # :low | :normal | :high | :max
     priority: :normal,
     # list of custom callbacks
     callback: [
@@ -70,71 +72,90 @@ defmodule MyPool do
       cast: {:websocket_client, :cast}
     ]
 
-  require Logger
-
-  @impl true
-  def handle_init(state) do
-    Logger.info("Worker started ##{inspect(state)} #{inspect(self())}")
-    {:ok, state}
-  end
-
-  @impl true
-  def handle_ready(sup_pid) do
-    Logger.info("Pool ready with supervisor #{inspect(sup_pid)}")
-  end
-
-  @impl true
-  def handle_job({:push, channel, message}, state) do
-    {:push, [channel, message], state}
-  end
-
-  def handle_job({:hardwork, message}, _state) do
-    heavy_work(message)
-  end
-
-  def handle_job({:hardwork, message, :notify}, state) do
-    result = heavy_work(message)
-
-    event_msg = %EventBus.Model.Event{
-      id: result.id,
-      topic: :done,
-      data: result
-    }
-
-    {:event, [event_msg], state}
-  end
-
-  def handle_job(:stop_worker, state) do
-    {:exit, state}
-  end
-
-  def handle_job(:stop_pool, state) do
-    {:stop, state}
-  end
-
-  @impl true
-  def handle_error(_data, attempt, error, state) do
-    Logger.error("Error: #{inspect(error)}")
-
-    cond do
-      # retry immediately and update state
-      attempt == 1 -> {:retry, %{state | key: 5}}
-      # backoff for 5 seconds
-      attempt == 2 -> {:backoff, 5000}
-      # stop retrying
-      attempt == 4 -> :halt
-      # retry immediately without updating state
-      true -> :something
+    @impl true
+    def handle_init(state) do
+      IO.puts("Worker started ##{inspect(state)} #{inspect(self())}")
+      {:ok, state}
     end
-  end
 
-  ## Private functions
-  defp heavy_work(message) do
-    # do something heavy
-    message
-  end
+    @impl true
+    def handle_job({:push, channel, message}, state) do
+      {:push, [channel, message], state}
+    end
+
+    def handle_job({:hardwork, message}, _state) do
+      heavy_work(message)
+    end
+
+    def handle_job({:hardwork, message, :notify}, state) do
+      result = heavy_work(message)
+
+      event_msg = %EventBus.Model.Event{
+        id: result.id,
+        topic: :done,
+        data: result
+      }
+
+      {:event, [event_msg], state}
+    end
+
+    def handle_job(:stop_worker, state) do
+      {:exit, state}
+    end
+
+    @impl true
+    # response updating state
+    def handle_call(:get_state, _from, state) do
+      {:set, state, state}
+    end
+
+    # response without updating state
+    def handle_call(:hardwork, _from, state) do
+      heavy_work(message)    
+    end
+
+    @impl true
+    def handle_error(_data, attempt, error, state) do
+      IO.puts("Error: #{inspect(error)}")
+
+      cond do
+        # retry immediately and update state
+        attempt == 1 -> {:retry, %{state | key: 5}}
+        # backoff for 5 seconds
+        attempt == 2 -> {:backoff, 5000}
+        # stop retrying
+        attempt == 4 -> :halt
+        # retry immediately without updating state
+        true -> :something
+      end
+    end
+
+    ## Private functions
+    defp heavy_work(message) do
+      # do something heavy
+      message
+    end
 end
 
+# Building a pool
+defmodule MyPool do
+  use Poolder.Pooler,
+    # pool unique name
+    name: :mypool,
+    # number of workers
+    pool_size: 10,
+    # dynamic pool size
+    dynamic: true,
+    # :round_robin | :random | :monotonic | :phash | :broadcast
+    mode: :round_robin,
+    # Poolder.Worker module (required)
+    worker: MyWorker
+
+  @impl true
+  def handle_init(sup_pid) do
+    IO.puts("Pool started ##{inspect(sup_pid)}")
+  end
+end
 ```
 
 ### Pool installation
@@ -223,7 +244,9 @@ end
 ### Building a FactoryPool
 ```elixir
 defmodule WillyWonkaFactory do
-  use Poolder.FactoryPool
+  use Poolder.FactoryPool,
+  # add this if you want to use GenServer like a child
+  caller: &GenServer.call/3
 end
 
 defmodule EchoWorker do
@@ -231,7 +254,11 @@ defmodule EchoWorker do
 
   def start_link(state), do: GenServer.start_link(__MODULE__, state)
 
-  def init(state), do: {:ok, state}
+  def init(state) do
+    # Monitor process, is not necesary if you use Poolder.Worker like as child
+    state.monitor.monitor(self())
+    {:ok, state}
+  end
 
   def handle_call(:ping, _from, state), do: {:reply, :pong, state}
   def handle_info({:set, new_state}, _state), do: {:noreply, new_state}
@@ -340,14 +367,14 @@ Add `poolder` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:poolder, "~> 0.1.9"}
+    {:poolder, "~> 0.1.10"}
   ]
 end
 ```
 
 ## Testing
 ```bash
-mix test test/worker_test.exs # soon
+mix test test/pooler_test.exs
 mix test test/factory_pool_test.exs
 mix test test/batch_test.exs
 mix test test/scheduler_test.exs
@@ -358,8 +385,8 @@ mix test test/tasker_test.exs
 This project is licensed under the MIT License.
 
 ---
-⚠️ **Important Notice**
+## Important Notice
 
-This library is under active development and may undergo several changes before reaching version `0.5.0`. Some structures, functions, or behaviors may be modified or removed in future updates. If you plan to use it in production, it's recommended to pin a specific version or keep track of ongoing changes.
+ ⚠️ This library is under active development and may undergo several changes before reaching version `0.5.0`. Some structures, functions, or behaviors may be modified or removed in future updates. If you plan to use it in production, it's recommended to pin a specific version or keep track of ongoing changes.
 
 Thanks for being part of the journey! 🤗

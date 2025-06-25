@@ -4,20 +4,37 @@ defmodule Poolder.FactoryPoolTest do
 
   defmodule WillyWonkaFactory do
     use Poolder.FactoryPool
+    # add this if you want to use GenServer like a child
+    # caller: &GenServer.call/3
   end
 
+  # defmodule EchoWorker do
+  #   use GenServer
+
+  #   def start_link(state), do: GenServer.start_link(__MODULE__, state)
+
+  #   def init(state) do
+  #     state.monitor.monitor(self())
+  #     {:ok, state}
+  #   end
+
+  #   def handle_call(:ping, _from, state), do: {:reply, :pong, state}
+  #   def handle_info({:set, new_state}, _state), do: {:noreply, new_state}
+  #   def handle_info(:crash, _state), do: {:stop, :normal, :ok}
+
+  #   def handle_info(:print, state) do
+  #     IO.inspect(state)
+  #     {:noreply, state}
+  #   end
+  # end
+
   defmodule EchoWorker do
-    use GenServer
-
-    def start_link(state), do: GenServer.start_link(__MODULE__, state)
-
-    def init(state), do: {:ok, state}
+    use Poolder.Worker
 
     def handle_call(:ping, _from, state), do: {:reply, :pong, state}
-    def handle_info({:set, new_state}, _state), do: {:noreply, new_state}
-    def handle_info(:crash, _state), do: {:stop, :normal, :ok}
-
-    def handle_info(:print, state) do
+    def handle_job({:set, new_state}, _state), do: {:ok, new_state}
+    def handle_job(:crash, _state), do: {:stop, :normal, :ok}
+    def handle_job(:print, state) do
       IO.inspect(state)
       {:noreply, state}
     end
@@ -73,6 +90,5 @@ defmodule Poolder.FactoryPoolTest do
 
     assert WillyWonkaFactory.count(hersheys_group) == 0
     assert WillyWonkaFactory.count(feastables_group) == 2
-
   end
 end

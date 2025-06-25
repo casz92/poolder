@@ -68,20 +68,8 @@ defmodule Poolder.Scheduler do
 
       def loop(state, hibernate_after \\ @hibernate_after) do
         receive do
-          {:kill, key} ->
-            handle_info({:kill, key}, state)
-
-          {:set, key, interval} ->
-            handle_info({:set, key, interval}, state)
-
-          {:timeout, key} ->
-            handle_info({:timeout, key}, state)
-
-          {:retry_job, key, attempt} ->
-            handle_info({:retry_job, key, attempt}, state)
-
-          _ ->
-            :ignore
+          msg ->
+            handle_msg(msg, state)
         after
           hibernate_after ->
             handle_hibernate(state)
@@ -89,31 +77,36 @@ defmodule Poolder.Scheduler do
         end
       end
 
-      defp handle_info({:kill, key}, state) do
+      defp handle_msg({:kill, key}, state) do
         tref = Map.get(state.trefs, key)
         cancel_timer(tref)
         loop(%{state | trefs: Map.delete(state.trefs, key)})
       end
 
-      defp handle_info({:set, key, interval}, state) do
+      defp handle_msg({:set, key, interval}, state) do
         tref = Map.get(state.trefs, key)
         cancel_timer(tref)
         tref = send_after(key, interval)
         loop(%{state | trefs: Map.put(state.trefs, key, tref)})
       end
 
-      defp handle_info({:timeout, key}, state = %{jobs: jobs, trefs: trefs}) do
+      defp handle_msg({:timeout, key}, state = %{jobs: jobs, trefs: trefs}) do
         pid = self()
         interval = Map.get(jobs, key)
         tref = send_after(key, interval)
 
-        spawn_link(__MODULE__, :try_run, [pid, key, 1, state])
+        spawn_link(__MODULE__, :try_run, [pid, key, 1, state, &handle_error/4])
 
         loop(%{state | trefs: Map.put(trefs, key, tref)})
       end
 
-      defp handle_info({:retry_job, key, attempt}, state) do
-        try_run(self(), key, attempt, state)
+      defp handle_msg({:retry_job, key, attempt}, state) do
+        try_run(self(), key, attempt, state, &handle_error/4)
+        loop(state)
+      end
+
+      defp handle_msg(msg, state) do
+        IO.puts("Scheduler #{__MODULE__} received unexpected message: #{inspect(msg)}")
         loop(state)
       end
 
@@ -126,7 +119,7 @@ defmodule Poolder.Scheduler do
         send(__MODULE__, {:set, task, interval})
       end
 
-      def try_run(pid, key, attempt, state) when attempt <= @retries do
+      def try_run(pid, key, attempt, state, error_handler) when attempt <= @retries do
         try do
           if @priority_abnormal, do: :erlang.process_flag(:priority, @priority)
 
@@ -152,9 +145,9 @@ defmodule Poolder.Scheduler do
         rescue
           error ->
             @catcher and
-              case handle_error(key, attempt, error, state) do
+              case error_handler.(key, attempt, error, state) do
                 {:retry, new_state} ->
-                  try_run(pid, key, attempt + 1, new_state)
+                  try_run(pid, key, attempt + 1, new_state, error_handler)
 
                 {:backoff, delay} ->
                   Process.send_after(pid, {:retry_job, key, attempt + 1}, delay)
@@ -165,7 +158,7 @@ defmodule Poolder.Scheduler do
         end
       end
 
-      def try_run(_pid, _key, _attempt, _state), do: :ok
+      def try_run(_pid, _key, _attempt, _state, _error_handler), do: :ok
 
       if @backoff > 0 do
         def handle_error(_key, _attempt, _error, state), do: {:backoff, @backoff}
@@ -220,4 +213,5 @@ defmodule Poolder.Scheduler do
               {:retry, new_state :: any}
               | {:backoff, delay :: integer}
               | :halt
+              | any()
 end

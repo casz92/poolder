@@ -72,7 +72,9 @@ defmodule Poolder.Batcher do
 
       def run(opts) do
         {t, c} = :edeque.new()
+        pid = self()
 
+        monitor(pid, opts)
         if @priority != :normal do
           Process.flag(:priority, @priority)
         end
@@ -162,6 +164,28 @@ defmodule Poolder.Batcher do
           loop(:edeque.new_table(), c, tref)
         end
       end
+
+      defp monitor(pid, args) when is_list(args) do
+        case Keyword.get(args, :monitor) do
+          nil ->
+            :ok
+
+          monitor ->
+            monitor.monitor(pid)
+        end
+      end
+
+      defp monitor(pid, args) when is_map(args) do
+        case Map.get(args, :monitor) do
+          nil ->
+            :ok
+
+          monitor ->
+            monitor.monitor(pid)
+        end
+      end
+
+      defp monitor(_pid, _args), do: :ok
 
       if @infinity do
         defp send_after, do: nil

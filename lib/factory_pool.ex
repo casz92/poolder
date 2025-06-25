@@ -25,7 +25,8 @@ defmodule Poolder.FactoryPool do
     monitor = Keyword.get(opts, :monitor, Poolder.Monitor.Default)
     table = Keyword.get(opts, :table)
     dispatcher = Keyword.get(opts, :dispatcher, [])
-    caller = Keyword.get(opts, :caller, &GenServer.call/3)
+    caller = Keyword.get(opts, :caller, &Poolder.call/3)
+    call_timeout = Keyword.get(opts, :call_timeout, 5_000)
     supervisor = Keyword.get(opts, :supervisor, Poolder.DynamicSupervisor)
     restart = Keyword.get(opts, :restart, :transient)
 
@@ -36,7 +37,8 @@ defmodule Poolder.FactoryPool do
             supervisor: supervisor,
             restart: restart,
             dispatcher: dispatcher,
-            caller: caller
+            caller: caller,
+            call_timeout: call_timeout
           ] do
       @name name || __MODULE__
       @table table || __MODULE__
@@ -47,7 +49,6 @@ defmodule Poolder.FactoryPool do
       @default_group Keyword.get(dispatcher, :default_group) || :default
 
       @monitor monitor
-      @caller caller
       @supervisor supervisor
       @restart restart
 
@@ -85,7 +86,7 @@ defmodule Poolder.FactoryPool do
 
         spec = %{
           id: make_ref(),
-          start: {mod, :start_link, [args]},
+          start: {mod, :start_link, [put_args(args, :monitor, @monitor)]},
           restart: :temporary
         }
 
@@ -123,6 +124,18 @@ defmodule Poolder.FactoryPool do
         :ets.delete(@group_table, group)
       end
 
+      defp put_args(args, key, value) when is_list(args) do
+        Keyword.put(args, key, value)
+      end
+
+      defp put_args(args, key, value) when is_map(args) do
+        Map.put(args, key, value)
+      end
+
+      defp put_args(args, key, value) do
+        args
+      end
+
       # Internal: creates or retrieves named DynamicSupervisor per group
       defp via_supervisor(group) do
         global_name = {:sup, group}
@@ -143,12 +156,13 @@ defmodule Poolder.FactoryPool do
         use Poolder.Dispatcher,
           group_table: @group_table,
           pid_table: @pid_table,
-          default_group: @default_group
+          default_group: @default_group,
+          caller: caller,
+          call_timeout: call_timeout
       end
     end
   end
 
-  @callback start_link() :: {:ok, pid} | :ignore
   @callback start_child(group :: atom, {module, args :: any}) :: {:ok, pid} | {:error, any}
   @callback terminate(pid :: pid) :: :ok | {:error, any}
   @callback terminate_group(group :: atom) :: :ok | {:error, any}

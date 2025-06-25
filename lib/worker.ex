@@ -1,13 +1,13 @@
 defmodule Poolder.Worker do
   defmacro __using__(opts) do
-    name = Keyword.fetch!(opts, :name)
+    name = Keyword.get(opts, :name)
     pool_size = Keyword.get(opts, :pool_size, 1)
-    retry = Keyword.get(opts, :retry, count: 0, backoff: 0)
-    retries = Keyword.get(retry, :count)
+    retry = Keyword.get(opts, :retry, count: 1, backoff: 0)
+    attempts = Keyword.get(retry, :count, 1)
     backoff = Keyword.get(retry, :backoff, 0)
     callbacks = Keyword.get(opts, :callback, [])
-    mode = Keyword.get(opts, :mode, :round_robin)
     priority = Keyword.get(opts, :priority, :normal)
+    hibernate_after = Keyword.get(opts, :hibernate_after, 500)
 
     replies =
       for {call, {mod, fun}} <- callbacks do
@@ -22,210 +22,122 @@ defmodule Poolder.Worker do
     quote bind_quoted: [
             name: name,
             pool_size: pool_size,
-            retries: retries,
+            attempts: attempts,
             backoff: backoff,
-            mode: mode,
+            hibernate_after: hibernate_after,
             replies: replies,
             priority: priority
           ] do
-      use GenServer
-
-      @pool name
-      @pool_size pool_size
-      @retries retries
+      @name name || __MODULE__
+      @attempts attempts
       @backoff backoff
-      @catcher @retries > 0
-      @supervisor __MODULE__.Supervisor
-      @mode mode
-      @max_index @pool_size - 1
-      @range 0..@max_index
+      @catcher @attempts > 0
       @call_timeout 5000
       @priority priority
       @priority_abnormal priority != :normal
+      @hibernate_after hibernate_after
 
-      def child_spec(id: worker_id) do
+      def child_spec(args) do
         %{
-          id: {@pool, worker_id},
-          start: {__MODULE__, :start_link, [worker_id]},
+          id: make_ref(),
+          start: {__MODULE__, :start_link, [args]},
           type: :worker,
           restart: :transient,
           shutdown: 500
         }
       end
 
-      def child_spec(opts) do
-        %{
-          id: __MODULE__,
-          start: {__MODULE__, :start_pool, [opts]},
-          type: :supervisor,
-          restart: :transient,
-          shutdown: 500
-        }
-      end
+      defp register(pid, args) when is_list(args) do
+        worker_id = Keyword.get(args, :id)
 
-      def start_pool(_opts) do
-        children =
-          [
-            {Registry, keys: :unique, name: @pool}
-          ] ++
-            for i <- @range, do: {__MODULE__, id: i}
+        cond do
+          worker_id != nil ->
+            name = Keyword.get(args, :name, @name)
+            :persistent_term.put({name, worker_id}, pid)
+            Registry.register(name, worker_id, pid)
 
-        if @mode == :round_robin do
-          cref = :counters.new(1, [:write_concurrency])
-          :persistent_term.put({@pool, :counter}, cref)
-        end
-
-        case Supervisor.start_link(Poolder.Supervisor, children, name: @supervisor) do
-          {:ok, pid} ->
-            __MODULE__.handle_ready(pid)
-            {:ok, pid}
-
-          error ->
-            error
+          true ->
+            :ok
         end
       end
 
-      defp via_tuple(id), do: {:via, Registry, {@pool, id}}
+      defp register(_pid, _args), do: :ok
 
-      @compile {:inline, try_execute: 3, reply: 3}
+      @compile {:inline, reply: 3}
       @behaviour Poolder.Worker
 
-      def start_link(id) do
-        GenServer.start_link(__MODULE__, id, name: via_tuple(id))
+      def start(args \\ []) do
+        spawn(__MODULE__, :run, [args])
       end
 
-      @impl true
-      def init(id) do
-        :persistent_term.put({@pool, id}, self())
+      def start_link(args \\ []) do
+        {:ok, spawn_link(__MODULE__, :run, [args])}
+      end
 
+      def run(args) do
+        pid = self()
+        register(pid, args)
+
+        monitor(pid, args)
         if @priority_abnormal, do: Process.flag(:priority, @priority)
+        Process.flag(:trap_exit, true)
+        {:ok, state} = handle_init(args)
 
-        handle_init(id)
+        loop(state, @hibernate_after)
       end
 
-      case @mode do
-        # Round-robin dispatch
-        :round_robin ->
-          # Reset the counter to 0
-          defp reset_counter do
-            cref = :persistent_term.get({@pool, :counter})
-            :counters.put(cref, 1, 0)
-          end
+      def loop(state, hibernate_after) do
+        receive do
+          {:EXIT, _from, reason} ->
+            terminate(reason, state)
 
-          @max_number 1_000_000
-          def next_pid do
-            cref = :persistent_term.get({@pool, :counter})
-            :counters.add(cref, 1, 1)
-            number = :counters.get(cref, 1)
-            key = rem(number, @pool_size)
-            if number > @max_number, do: reset_counter()
-            :persistent_term.get({@pool, key})
-          end
+          {:DOWN, _ref, :process, _pid, reason} ->
+            terminate(reason, state)
 
-        # Random dispatch
-        :random ->
-          def next_pid do
-            number = :rand.uniform(@pool_size) - 1
-            :persistent_term.get({@pool, number})
-          end
+          {:retry_job, data, attempt} ->
+            try_execute(data, attempt, state, &handle_job/2, &handle_error/4)
 
-        # Monotonic time dispatch
-        :monotonic ->
-          def next_pid do
-            number = :erlang.monotonic_time() |> abs() |> rem(@pool_size)
-            :persistent_term.get({@pool, number})
-          end
+          {:call, from, data} ->
+            case handle_call(data, from, state) do
+              {:reply, result, state} ->
+                send(from, {:reply, result})
+                loop(state, @hibernate_after)
 
-        # PHash dispatch
-        :phash ->
-          def next_pid(data) do
-            number = :erlang.phash2(data, @pool_size)
-            :persistent_term.get({@pool, number})
-          end
-
-        :broadcast ->
-          def next_pid, do: nil
-
-        _ ->
-          raise "Invalid pool mode: #{@mode} use :round_robin, :random, :monotonic, :broadcast or :phash"
-      end
-
-      def pid(id), do: :persistent_term.get({@pool, id}, nil)
-
-      def size, do: @pool_size
-
-      case @mode do
-        :phash ->
-          def cast(data) do
-            pid = next_pid(data)
-            GenServer.cast(pid, data)
-          end
-
-          def call(data, timeout \\ @call_timeout) do
-            try do
-              pid = next_pid(data)
-              {:ok, GenServer.call(pid, data, timeout)}
-            catch
-              :exit, {:timeout, _} -> {:error, :timeout}
-              :exit, reason -> {:error, reason}
+              result ->
+                send(from, {:reply, result})
+                loop(state, @hibernate_after)
             end
-          end
 
-        :broadcast ->
-          def cast(data) do
-            for i <- @range do
-              pid = :persistent_term.get({@pool, i})
-              GenServer.cast(pid, data)
-            end
-          end
-
-          def call(data, timeout \\ @call_timeout) do
-            for i <- @range do
-              try do
-                pid = :persistent_term.get({@pool, i})
-                {:ok, GenServer.call(pid, data, timeout)}
-              catch
-                :exit, {:timeout, _} -> {:error, :timeout}
-                :exit, reason -> {:error, reason}
-              end
-            end
-          end
-
-        _ ->
-          def cast(data) do
-            pid = next_pid()
-            GenServer.cast(pid, data)
-          end
-
-          def call(data, timeout \\ @call_timeout) do
-            try do
-              pid = next_pid()
-              {:ok, GenServer.call(pid, data, timeout)}
-            catch
-              :exit, {:timeout, _} -> {:error, :timeout}
-              :exit, reason -> {:error, reason}
-            end
-          end
+          message ->
+            try_execute(message, 1, state, &handle_job/2, &handle_error/4)
+        after
+          hibernate_after ->
+            handle_hibernate(state)
+            Process.hibernate(__MODULE__, :loop, [state, hibernate_after])
+        end
       end
 
-      def cast(pid, data) do
-        GenServer.cast(pid, data)
+      defp monitor(pid, args) when is_list(args) do
+        case Keyword.get(args, :monitor) do
+          nil ->
+            :ok
+
+          monitor ->
+            monitor.monitor(pid)
+        end
       end
 
-      @impl true
-      def handle_cast(data, state) do
-        try_execute(data, 1, state)
+      defp monitor(pid, args) when is_map(args) do
+        case Map.get(args, :monitor) do
+          nil ->
+            :ok
+
+          monitor ->
+            monitor.monitor(pid)
+        end
       end
 
-      @impl true
-      def handle_call(data, _from, state) do
-        try_execute(data, 1, state)
-      end
-
-      @impl true
-      def handle_info({:retry_job, data, attempt}, state) do
-        try_execute(data, attempt, state)
-      end
+      defp monitor(_pid, _args), do: :ok
 
       if replies do
         replies
@@ -233,53 +145,61 @@ defmodule Poolder.Worker do
 
       defp reply(_call, message, state), do: {:reply, message, state}
 
-      defp try_execute(data, attempt, state) when attempt <= @retries do
+      defp try_execute(data, attempt, state, handler, error_handler) when attempt <= @attempts do
         try do
-          case handle_job(data, state) do
-            {:noreply, new_state} ->
-              {:noreply, new_state}
+          case handler.(data, state) do
+            {:ok, new_state} ->
+              loop(new_state, @hibernate_after)
+
+            {:stop, reason, new_state} ->
+              terminate(reason, new_state)
+              Process.exit(self(), reason)
 
             # Push a message
             {call, args, new_state} ->
               reply(call, args, new_state)
-
-            # Stop the pool
-            {:stop, new_state} ->
-              Supervisor.stop(@supervisor, :normal)
-              {:stop, :normal, new_state}
+              loop(new_state, @hibernate_after)
 
             # Close the process
-            {:exit, new_state} ->
-              {:stop, :normal, new_state}
+            {:stop, new_state} ->
+              terminate(:normal, new_state)
+              Process.exit(self(), :normal)
 
             _ ->
-              {:noreply, state}
+              loop(state, @hibernate_after)
           end
         rescue
+          FunctionClauseError ->
+            loop(state, @hibernate_after)
+
           error ->
             (@catcher and
-               case handle_error(data, attempt, error, state) do
+               case error_handler.(data, attempt, error, state) do
                  {:retry, new_state} ->
-                   try_execute(data, attempt + 1, new_state)
+                   try_execute(data, attempt + 1, new_state, handler, error_handler)
 
                  {:backoff, delay} ->
                    Process.send_after(self(), {:retry_job, data, attempt + 1}, delay)
-                   {:noreply, state}
+                   loop(state, @hibernate_after)
 
                  :halt ->
-                   {:noreply, state}
+                   :halt
 
                  _ ->
-                   {:noreply, state}
-               end) || {:noreply, state}
+                   loop(state, @hibernate_after)
+               end) || loop(state, @hibernate_after)
         end
       end
 
-      defp try_execute(_data, _attempt, state), do: {:noreply, state}
+      defp try_execute(_data, _attempt, state, _handler, _error_handler),
+        do: loop(state, @hibernate_after)
 
       # Callbacks
-      def handle_init(id), do: {:ok, %{id: id}}
-      def handle_job(_data, state), do: {:noreply, state}
+      def handle_init(args), do: {:ok, args}
+      def handle_job(_data, state), do: {:ok, state}
+      def handle_call(data, _from, state), do: {:ok, data}
+      def handle_hibernate(_state), do: :ok
+      def terminate(_reason, _state), do: :ok
 
       if @backoff > 0 do
         def handle_error(_data, _attempt, _error, state), do: {:backoff, @backoff}
@@ -287,24 +207,30 @@ defmodule Poolder.Worker do
         def handle_error(_data, _attempt, _error, state), do: {:retry, state}
       end
 
-      def handle_ready(_pid), do: :ok
-
       defoverridable handle_init: 1,
                      handle_job: 2,
+                     handle_call: 3,
                      handle_error: 4,
-                     handle_ready: 1
+                     handle_hibernate: 1,
+                     terminate: 2
     end
   end
 
   ## Behaviour
-  @callback handle_init(id :: integer()) :: {:ok, state :: any()}
-  @callback handle_ready(supervisor_pid :: pid()) :: any()
+
+  @callback handle_init(args :: any()) :: {:ok, state :: any()}
   @callback handle_job(data :: any(), state :: any()) ::
-              {:noreply, state :: any()}
-              | {:push, any(), any(), state :: any()}
-              | {:reply, reply :: any(), state :: any()}
-              | {:stop, reason :: any(), state :: any()}
-              | {:exit, reason :: any(), state :: any()}
+              {:ok, state :: any()}
+              | {fun_callback :: atom(), args :: any(), any(), state :: any()}
+              | {:stop, reply :: any(), state :: any()}
+              | {:stop, state :: any()}
+              | any()
+
+  @callback handle_call(msg :: any, from :: pid, state :: any) ::
+              {:reply, response :: any, state :: any} | any
+
   @callback handle_error(data :: any(), attempt :: integer(), error :: any(), state :: any()) ::
-              {:retry, state :: any()} | {:delay, integer()} | :halt
+              {:retry, state :: any()} | {:delay, integer()} | :halt | any()
+  @callback handle_hibernate(state :: any()) :: any()
+  @callback terminate(reason :: any(), state :: any()) :: any()
 end

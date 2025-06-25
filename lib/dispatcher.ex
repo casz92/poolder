@@ -3,18 +3,21 @@ defmodule Poolder.Dispatcher do
     group_table = Keyword.get(opts, :group_table)
     pid_table = Keyword.get(opts, :pid_table)
     default_group = Keyword.get(opts, :default_group, :default)
-    caller = Keyword.get(opts, :caller, &GenServer.call/3)
+    caller = Keyword.get(opts, :caller, &Poolder.call/3)
+    call_timeout = Keyword.get(opts, :call_timeout, 5_000)
 
     quote bind_quoted: [
             group_table: group_table,
             pid_table: pid_table,
             default_group: default_group,
-            caller: caller
+            caller: caller,
+            call_timeout: call_timeout
           ] do
       @group_table group_table
       @pid_table pid_table
       @default_group default_group
       @caller caller
+      @call_timeout call_timeout
 
       if @group_table == nil do
         raise "group_table is required"
@@ -47,12 +50,12 @@ defmodule Poolder.Dispatcher do
         :ets.info(@group_table, :size)
       end
 
-      @doc "Sends a synchronous GenServer call to a specific pid"
-      def call(pid, msg, timeout \\ 5000) when is_pid(pid) do
+      @doc "Sends a synchronous call to a specific pid"
+      def call(pid, msg, timeout \\ @call_timeout) when is_pid(pid) do
         @caller.(pid, msg, timeout)
       end
 
-      @doc "Performs a guarded GenServer call to a pid under specific group"
+      @doc "Performs a guarded call to a pid under specific group"
       def call(group, pid, msg, timeout) when is_pid(pid) do
         case :ets.lookup(@pid_table, pid) do
           [{^pid, ^group}] -> @caller.(pid, msg, timeout)
@@ -98,5 +101,5 @@ defmodule Poolder.Dispatcher.Default do
     group_table: :poolder_group_table,
     pid_table: :poolder_pid_table,
     default_group: :default,
-    caller: &GenServer.call/3
+    caller: &Poolder.call/3
 end
