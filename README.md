@@ -6,11 +6,7 @@
 A compile-time builder that generates a concurrent pool of worker processes, batchers and schedulers for parallel task execution.
 
 ### Contents
-- [Features](#features)
-- [Behaviors](#callbacks)
-  - [Workers](#workers-callbacks)
-  - [Batchers](#batcher-callbacks)
-  - [Schedulers](#scheduler-callbacks)
+- [Features](#key-features-of-poolder)
 - [Usage](#usage)
   - [Building a pool of workers](#building-a-pool-of-workers)
   - [Pool installation](#pool-installation)
@@ -19,39 +15,25 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
   - [Building a FactoryPool](#building-a-factorypool)
   - [Building a batcher](#building-a-batcher)
 - [Installation](#installation)
+- [Behaviors](#callbacks)
+  - [Workers](#workers-callbacks)
+  - [Poolers](#pooler-callbacks)
+  - [Batchers](#batcher-callbacks)
+  - [Schedulers](#scheduler-callbacks)
 - [Testing](#testing)
 - [License](#license)
 - [Important Notice](#important-notice)
 
-## Features
-- **Fixed Pool Size**: Define the number of workers at compile time.
-- **Scheduled Tasks**: Define recurring jobs at compile time with cron-style or intervals.
-- **Runtime Rescheduling**: Create, reconfigure, or cancel scheduled tasks dynamically.
-- **Batch message Processing**: Process multiple messages in batches.
-- **Tasker**: A simple task executor for concurrent processing with limited concurrency.
-- **FactoryPool**: A dynamic pool of workers with groups that can be send messages to, started and stopped at runtime.
+## Key Features of Poolder
+- **Fixed Pool Size**: Defines a fixed-size pool of workers at compile-time, ideal for consistent and controlled workloads.
+- **Dynamic Pool Size**: Allows runtime scaling of workers based on system demands, enabling flexible throughput.
+- **Scheduled Tasks**: Supports compile-time definition of recurring jobs using cron-style expressions or time intervals.
+- **Runtime Rescheduling**: Create, reconfigure, or cancel scheduled tasks dynamically without requiring a system restart.
+- **Batchers**: Processes batches of messages with configurable size and timeout, optimizing efficiency and throughput.
+- **FactoryPool**: Manages multiple dynamic worker pools grouped logically. Groups can be messaged collectively or individually, and can be started, reconfigured, or stopped at runtime.
+- **Workers**: Lightweight and isolated processing units with custom callback support and built-in error handling.
+- **Tasker**: A concurrent task executor with controlled concurrency levels, perfect for keeping workloads responsive without overloading the system.
 
-## Callbacks
-### Workers callbacks
-- `handle_init/1`: Initializes the worker state.
-- `handle_job/2`: Handles the job execution.
-- `handle_call/3`: Handles synchronous calls.
-- `handle_hibernate/1`: Handles before hibernate.
-- `handle_error/4`: Handles job errors.
-
-### Pooler callbacks
-- `handle_init/1`: Handles pool ready.
-
-### Batcher callbacks
-- `handle_init/1`: Initializes the batcher state.
-- `handle_batch/2`: Handles the batch processing.
-- `handle_hibernate/1`: Handles before hibernate.
-
-### Scheduler callbacks
-- `handle_init/1`: Initializes the scheduler state.
-- `handle_job/2`: Handles the job execution.
-- `handle_error/4`: Handles job errors.
-- `handle_hibernate/1`: Handles before hibernate.
 
 ## Usage
 
@@ -371,6 +353,29 @@ def deps do
   ]
 end
 ```
+
+## Callbacks
+### Workers callbacks
+- `handle_init/1`: Initializes the worker state.
+- `handle_job/2`: Handles the job execution.
+- `handle_call/3`: Handles synchronous calls.
+- `handle_hibernate/1`: Handles before hibernate.
+- `handle_error/4`: Handles job errors.
+
+### Pooler callbacks
+- `handle_init/1`: Handles pool ready.
+
+### Batcher callbacks
+- `handle_init/1`: Initializes the batcher state.
+- `handle_batch/2`: Handles the batch processing.
+- `handle_hibernate/1`: Handles before hibernate.
+
+### Scheduler callbacks
+- `handle_init/1`: Initializes the scheduler state.
+- `handle_job/2`: Handles the job execution.
+- `handle_error/4`: Handles job errors.
+- `handle_hibernate/1`: Handles before hibernate.
+
 
 ## Testing
 ```bash

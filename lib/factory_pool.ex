@@ -93,7 +93,7 @@ defmodule Poolder.FactoryPool do
         with {:ok, pid} <- DynamicSupervisor.start_child(sup_name, spec) do
           :ets.insert(@group_table, {group, pid})
           :ets.insert(@pid_table, {pid, group})
-          @monitor.monitor(pid)
+          # @monitor.monitor(pid)
           {:ok, pid}
         end
       end
