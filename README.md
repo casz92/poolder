@@ -142,9 +142,9 @@ defmodule MyPool do
   use Poolder.Pooler,
     # pool unique name
     name: :mypool,
-    # number of workers
+    # initial number of workers
     pool_size: 10,
-    # dynamic pool size
+    # dynamic pool size, if true use: start_child/0, stop_child/0
     dynamic: true,
     # :round_robin | :random | :monotonic | :phash | :broadcast
     mode: :round_robin,
