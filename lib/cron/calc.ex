@@ -15,20 +15,6 @@ defmodule Cron.Calc do
     end
   end
 
-  @spec previous(NaiveDateTime.t(), Cron.t()) :: NaiveDateTime.t()
-  def previous(%NaiveDateTime{} = datetime, %Cron{} = cron) do
-    with ^datetime <- update(datetime, cron, :desc) do
-      datetime
-      |> NaiveDateTime.add(-@second)
-      |> update(cron, :desc)
-    end
-  end
-
-  @spec match?(NaiveDateTime.t(), Cron.t()) :: boolean()
-  def match?(%NaiveDateTime{} = datetime, %Cron{} = cron) do
-    datetime == update(datetime, cron, :asc)
-  end
-
   defp update(datetime, cron, order) do
     datetime
     |> update(cron, :month, order)
@@ -83,14 +69,6 @@ defmodule Cron.Calc do
     reset(%{datetime | year: year + 1, month: new}, :month, :asc)
   end
 
-  defp update(%{year: year} = datetime, _cron, :month, :desc, {actual, new}) when actual < new do
-    reset(%{datetime | year: year - 1, month: new}, :month, :desc)
-  end
-
-  defp update(datetime, _cron, :month, :desc, {actual, new}) when actual > new do
-    reset(%{datetime | month: new}, :month, :desc)
-  end
-
   defp update(datetime, cron, :day, :asc, {actual, actual}) do
     case valid_day?(datetime, cron) do
       true ->
@@ -128,35 +106,6 @@ defmodule Cron.Calc do
     |> update(cron, :day, :asc)
   end
 
-  defp update(datetime, cron, :day, :desc, {actual, actual}) do
-    case valid_day?(datetime, cron) do
-      true ->
-        datetime
-
-      false ->
-        datetime
-        |> previous_day(cron)
-        |> reset(:day, :desc)
-        |> update(cron, :month, :desc)
-        |> update(cron, :day, :desc)
-    end
-  end
-
-  defp update(datetime, cron, :day, :desc, {actual, new}) when actual < new do
-    datetime
-    |> previous_month()
-    |> reset(:month, :desc)
-    |> update(cron, :month, :desc)
-    |> update(cron, :day, :desc)
-  end
-
-  defp update(datetime, cron, :day, :desc, {actual, new}) when actual > new do
-    %{datetime | day: new}
-    |> reset(:day, :desc)
-    |> update(cron, :month, :desc)
-    |> update(cron, :day, :desc)
-  end
-
   defp update(datetime, _cron, _field, _order, {actual, actual}), do: datetime
 
   defp update(datetime, _cron, field, :asc, {actual, new}) when actual < new do
@@ -174,30 +123,6 @@ defmodule Cron.Calc do
     |> update(cron, :asc)
   end
 
-  defp update(datetime, _cron, field, :desc, {actual, new}) when actual > new do
-    datetime
-    |> Map.put(field, new)
-    |> reset(field, :desc)
-  end
-
-  defp update(datetime, cron, field, :desc, {actual, new}) when actual < new do
-    distance = distance(actual, new, field, :desc)
-
-    datetime
-    |> NaiveDateTime.add(distance)
-    |> reset(field, :desc)
-    |> update(cron, :desc)
-  end
-
-  defp previous_day(datetime, %{day_of_week: day_of_week}) do
-    datetime = NaiveDateTime.add(datetime, -@day)
-    actual = day_of_week(datetime)
-    value = value(actual, day_of_week, :desc)
-    distance = distance(actual, value, :day_of_week, :desc)
-
-    NaiveDateTime.add(datetime, distance)
-  end
-
   defp next_day(datetime, %{day_of_week: 0..6}) do
     NaiveDateTime.add(datetime, @day)
   end
@@ -209,14 +134,6 @@ defmodule Cron.Calc do
     distance = distance(actual, value, :day_of_week, :asc)
 
     NaiveDateTime.add(datetime, distance)
-  end
-
-  defp previous_month(%{year: year, month: 1} = datetime) do
-    %{datetime | year: year - 1, month: 12}
-  end
-
-  defp previous_month(%{month: month} = datetime) do
-    %{datetime | month: month - 1}
   end
 
   defp next_month(%{year: year, month: 12} = datetime) do
@@ -256,9 +173,12 @@ defmodule Cron.Calc do
 
   defp value(actual, %Range{} = range, order) do
     cond do
-      actual in range -> actual
-      order == :asc -> range.first
-      order == :desc -> range.last
+      actual in range ->
+        actual
+
+      order == :asc ->
+        range.first
+        # order == :desc -> range.last
     end
   end
 
@@ -266,33 +186,16 @@ defmodule Cron.Calc do
     Enum.find(list, first, fn value -> value >= actual end)
   end
 
-  defp value(actual, [_head | _tail] = list, :desc) do
-    [first | _rest] = list = Enum.reverse(list)
-    Enum.find(list, first, fn value -> value <= actual end)
-  end
-
   defp distance(actual, new, :second, :asc) when actual > new do
     60 - actual + new
-  end
-
-  defp distance(actual, new, :second, :desc) when actual < new do
-    (60 - new + actual) * -@second
   end
 
   defp distance(actual, new, :minute, :asc) when actual > new do
     (60 - actual + new) * @minute
   end
 
-  defp distance(actual, new, :minute, :desc) when actual < new do
-    (60 - new + actual) * -@minute
-  end
-
   defp distance(actual, new, :hour, :asc) when actual > new do
     (24 - actual + new) * @hour
-  end
-
-  defp distance(actual, new, :hour, :desc) when actual < new do
-    (24 - new + actual) * -@hour
   end
 
   defp distance(actual, new, :day_of_week, :asc) do
@@ -300,14 +203,6 @@ defmodule Cron.Calc do
       actual == new -> 0
       actual < new -> (new - actual) * @day
       actual > new -> (6 - actual + new) * @day
-    end
-  end
-
-  defp distance(actual, new, :day_of_week, :desc) do
-    cond do
-      actual == new -> 0
-      actual > new -> (actual - new) * -@day
-      actual < new -> (6 - new + actual) * -@day
     end
   end
 
@@ -329,32 +224,9 @@ defmodule Cron.Calc do
     end
   end
 
-  defp reset(datetime, field, :desc) do
-    case field do
-      :month ->
-        %{datetime | day: Date.days_in_month(datetime), hour: 23, minute: 59, second: 59}
-
-      :day ->
-        %{datetime | hour: 23, minute: 59, second: 59}
-
-      :hour ->
-        %{datetime | minute: 59, second: 59}
-
-      :minute ->
-        %{datetime | second: 59}
-    end
-  end
-
   defp min_max_datetime(datetime1, datetime2, :asc) do
     case NaiveDateTime.compare(datetime1, datetime2) do
       :gt -> datetime2
-      _else -> datetime1
-    end
-  end
-
-  defp min_max_datetime(datetime1, datetime2, :desc) do
-    case NaiveDateTime.compare(datetime1, datetime2) do
-      :lt -> datetime2
       _else -> datetime1
     end
   end
