@@ -29,8 +29,8 @@ A compile-time builder that generates a concurrent pool of worker processes, bat
 - **Dynamic Pool Size**: Allows runtime scaling of workers based on system demands, enabling flexible throughput.
 - **Scheduled Tasks**: Supports compile-time definition of recurring jobs using cron-style expressions or time intervals.
 - **Runtime Rescheduling**: Create, reconfigure, or cancel scheduled tasks dynamically without requiring a system restart.
-- **Batchers**: Processes batches of messages with configurable size and timeout, optimizing efficiency and throughput.
-- **FactoryPool**: Manages multiple dynamic worker pools grouped logically. Groups can be messaged collectively or individually, and can be started, reconfigured, or stopped at runtime.
+- **Batchers**: Processes batches of messages with configurable size and timeout, **optimizing efficiency and throughput**.
+- **FactoryPool**: Manages multiple dynamic worker pools grouped logically. **Groups can be messaged collectively or individually**, and can be started, reconfigured, or stopped at runtime.
 - **Workers**: Lightweight and isolated processing units with custom callback support and built-in error handling.
 - **Tasker**: A concurrent task executor with controlled concurrency levels, perfect for keeping workloads responsive without overloading the system.
 
