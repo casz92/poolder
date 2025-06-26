@@ -392,6 +392,6 @@ This project is licensed under the MIT License.
 ---
 ## Important Notice
 
- ⚠️ This library is under active development and may undergo several changes before reaching version `0.5.0`. Some structures, functions, or behaviors may be modified or removed in future updates. If you plan to use it in production, it's recommended to pin a specific version or keep track of ongoing changes.
+ ⚠️ This library is under active development and may undergo several changes before reaching version `0.2.0`. Some structures, functions, or behaviors may be modified or removed in future updates. If you plan to use it in production, it's recommended to pin a specific version or keep track of ongoing changes.
 
 Thanks for being part of the journey! 🤗
