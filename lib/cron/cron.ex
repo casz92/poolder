@@ -1,4 +1,5 @@
 defmodule Cron do
+  @moduledoc false
   import Kernel, except: [match?: 2]
 
   alias Cron.Calc
