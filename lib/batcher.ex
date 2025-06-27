@@ -35,6 +35,7 @@ defmodule Poolder.Batcher do
       @infinity batch_timeout == :infinity
       @hibernate_after hibernate_after
       @priority priority
+      @abnormal_priority priority != :normal
 
       @result_fun if @stream, do: &:edeque.stream/3, else: &:edeque.to_list/3
 
@@ -75,7 +76,7 @@ defmodule Poolder.Batcher do
         pid = self()
 
         monitor(pid, opts)
-        if @priority != :normal do
+        if @abnormal_priority do
           Process.flag(:priority, @priority)
         end
 

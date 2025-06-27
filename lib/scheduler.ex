@@ -6,7 +6,7 @@ defmodule Poolder.Scheduler do
     retries = Keyword.get(retry, :count)
     backoff = Keyword.get(retry, :backoff, 1000)
     hibernate_after = Keyword.get(opts, :hibernate_after, :infinity)
-    priority = Keyword.get(opts, :priority, 0)
+    priority = Keyword.get(opts, :priority, :normal)
 
     quote bind_quoted: [
             name: name,
@@ -101,7 +101,7 @@ defmodule Poolder.Scheduler do
       end
 
       defp handle_msg({:retry_job, key, attempt}, state) do
-        try_run(self(), key, attempt, state, &handle_error/4)
+        spawn_link(__MODULE__, :try_run, [self(), key, attempt, state, &handle_error/4])
         loop(state)
       end
 
@@ -121,7 +121,7 @@ defmodule Poolder.Scheduler do
 
       def try_run(pid, key, attempt, state, error_handler) when attempt <= @retries do
         try do
-          if @priority_abnormal, do: :erlang.process_flag(:priority, @priority)
+          if @priority_abnormal, do: Process.flag(:priority, @priority)
 
           case :erlang.apply(__MODULE__, key, [state]) do
             {:set, new_interval} ->
