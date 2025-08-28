@@ -53,19 +53,15 @@ defmodule Poolder.Scheduler do
         {:ok, pid}
       end
 
+      @doc false
       def run(opts) do
-        trefs =
-          for {key, interval} <- @jobs, into: %{} do
-            {
-              key,
-              send_after(key, interval)
-            }
-          end
+        trefs = build_timers(@jobs)
 
         args = %{jobs: Map.new(@jobs), trefs: trefs, opts: opts}
         loop(args)
       end
 
+      @doc false
       def loop(state, hibernate_after \\ @hibernate_after) do
         receive do
           msg ->
@@ -90,6 +86,19 @@ defmodule Poolder.Scheduler do
         loop(%{state | trefs: Map.put(state.trefs, key, tref)})
       end
 
+      defp handle_msg({:new, map}, state) do
+        cancel_all(state)
+
+        trefs = build_timers(map)
+
+        loop(%{state | jobs: map, trefs: trefs})
+      end
+
+      defp handle_msg(:kill_all, state) do
+        cancel_all(state)
+        loop(%{state | trefs: %{}})
+      end
+
       defp handle_msg({:timeout, key}, state = %{jobs: jobs, trefs: trefs}) do
         pid = self()
         interval = Map.get(jobs, key)
@@ -111,14 +120,27 @@ defmodule Poolder.Scheduler do
       end
 
       ## Public API
-      def stop(task) do
+      @doc "Kills a specific job"
+      def kill(task) do
         send(__MODULE__, {:kill, task})
       end
 
+      @doc "Sets the interval for a task"
       def schedule(task, interval) do
         send(__MODULE__, {:set, task, interval})
       end
 
+      @doc "Cancel all jobs and sets new jobs"
+      def reschedule(map) do
+        send(__MODULE__, {:new, map})
+      end
+
+      @doc "Kills all jobs"
+      def kill_all do
+        send(__MODULE__, :kill_all)
+      end
+
+      @doc false
       def try_run(pid, key, attempt, state, error_handler) when attempt <= @retries do
         try do
           if @priority_abnormal, do: Process.flag(:priority, @priority)
@@ -130,11 +152,17 @@ defmodule Poolder.Scheduler do
             {:set, name, new_interval} ->
               send(pid, {:set, name, new_interval})
 
+            {:new, map} ->
+              send(pid, {:new, map})
+
             {:kill, key} ->
               send(pid, {:kill, key})
 
             :kill ->
               send(pid, {:kill, key})
+
+            :kill_all ->
+              send(pid, :kill_all)
 
             :stop ->
               Process.exit(pid, :normal)
@@ -166,13 +194,20 @@ defmodule Poolder.Scheduler do
         def handle_error(_key, _attempt, _error, state), do: {:retry, state}
       end
 
+      @doc "Called when the scheduler hibernates."
       def handle_hibernate(_state), do: :ok
 
-      defoverridable stop: 1, schedule: 2, handle_error: 4, handle_hibernate: 1
+      defoverridable schedule: 2, handle_error: 4, handle_hibernate: 1
 
       ## Private API
       defp cancel_timer(nil), do: :ok
       defp cancel_timer(tref), do: Process.cancel_timer(tref)
+
+      defp cancel_all(state) do
+        for {key, tref} <- state.trefs do
+          cancel_timer(tref)
+        end
+      end
 
       defp send_after(key, interval) do
         case next_interval(interval) do
@@ -181,6 +216,15 @@ defmodule Poolder.Scheduler do
 
           next_interval ->
             Process.send_after(self(), {:timeout, key}, next_interval)
+        end
+      end
+
+      defp build_timers(jobs) do
+        for {key, interval} <- jobs, into: %{} do
+          {
+            key,
+            send_after(key, interval)
+          }
         end
       end
 

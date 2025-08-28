@@ -1,7 +1,7 @@
 defmodule Poolder.MixProject do
   use Mix.Project
 
-  @version "0.1.11"
+  @version "0.1.12"
 
   def project do
     [
