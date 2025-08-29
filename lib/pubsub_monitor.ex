@@ -33,6 +33,9 @@ defmodule Poolder.PubSub.Monitor do
           _ ->
             loop(table)
         end
+
+      :stop ->
+        :ok
     after
       300_000 ->
         :erlang.hibernate(__MODULE__, :loop, [table])

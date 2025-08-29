@@ -172,6 +172,12 @@ defmodule Poolder.PubSub do
     end
   end
 
+  def stop(server) do
+    table = table_for(server)
+    mon = monitor_pid!(table)
+    send(mon, :stop)
+  end
+
   # defp normalize_topic!(topic) when is_binary(topic), do: topic
   # defp normalize_topic!(topic) when is_atom(topic), do: Atom.to_string(topic)
 
