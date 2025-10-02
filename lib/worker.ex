@@ -197,7 +197,7 @@ defmodule Poolder.Worker do
       # Callbacks
       def handle_init(args), do: {:ok, args}
       def handle_job(_data, state), do: {:ok, state}
-      def handle_call(data, _from, state), do: {:ok, data}
+      def handle_call(data, _from, state), do: {:reply, data, state}
       def handle_hibernate(_state), do: :ok
       def terminate(_reason, _state), do: :ok
 
