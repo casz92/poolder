@@ -1,5 +1,5 @@
 # Poolder
-![Version](https://img.shields.io/badge/version-0.1.13-blue.svg)
+![Version](https://img.shields.io/badge/version-0.1.14-blue.svg)
 ![Status](https://img.shields.io/badge/status-active-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
@@ -349,7 +349,7 @@ Add `poolder` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:poolder, "~> 0.1.13"}
+    {:poolder, "~> 0.1.14"}
   ]
 end
 ```

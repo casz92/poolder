@@ -18,7 +18,7 @@ defmodule Poolder.Pooler do
       def child_spec(opts) do
         %{
           id: @name,
-          start: {__MODULE__, :start_pool, [opts]},
+          start: {__MODULE__, :start_pool, [opts ++ [mode: @mode]]},
           type: :supervisor,
           restart: :transient,
           shutdown: 500
@@ -30,10 +30,10 @@ defmodule Poolder.Pooler do
           [
             {Registry, keys: :unique, name: @name}
           ] ++
-            for i <- 1..@pool_size,
+            for i <- 0..(@pool_size - 1),
                 do: {@worker, [id: i, name: @name, monitor: args[:monitor]] ++ args}
 
-        if @mode == :round_robin do
+        if args[:mode] == :round_robin do
           cref = :counters.new(1, [:write_concurrency])
           :persistent_term.put({@name, :counter}, cref)
         end
@@ -43,12 +43,14 @@ defmodule Poolder.Pooler do
         if @dynamic do
           case Poolder.DynamicSupervisor.start_link(@supervisor_name, []) do
             {:ok, pid} ->
+              {:ok, state} = handle_init(pid)
+
               children
               |> Enum.each(fn child ->
-                {:ok, _pid} = DynamicSupervisor.start_child(@supervisor_name, child)
+                {:ok, _pid} =
+                  DynamicSupervisor.start_child(@supervisor_name, %{child: child, state: state})
               end)
 
-              handle_init(pid)
               {:ok, pid}
 
             error ->
