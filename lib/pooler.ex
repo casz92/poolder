@@ -48,7 +48,7 @@ defmodule Poolder.Pooler do
               children
               |> Enum.each(fn child ->
                 {:ok, _pid} =
-                  DynamicSupervisor.start_child(@supervisor_name, %{child: child, state: state})
+                  DynamicSupervisor.start_child(@supervisor_name, child)
               end)
 
               {:ok, pid}

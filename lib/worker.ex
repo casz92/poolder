@@ -80,7 +80,6 @@ defmodule Poolder.Worker do
 
         monitor(pid, args)
         if @priority_abnormal, do: Process.flag(:priority, @priority)
-        Process.flag(:trap_exit, true)
         {:ok, state} = handle_init(args)
 
         loop(state, @hibernate_after)
@@ -88,12 +87,6 @@ defmodule Poolder.Worker do
 
       def loop(state, hibernate_after) do
         receive do
-          {:EXIT, _from, reason} ->
-            terminate(reason, state)
-
-          {:DOWN, _ref, :process, _pid, reason} ->
-            terminate(reason, state)
-
           {:retry_job, data, attempt} ->
             try_execute(data, attempt, state, &handle_job/2, &handle_error/4)
 
