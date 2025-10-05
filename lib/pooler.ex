@@ -43,13 +43,13 @@ defmodule Poolder.Pooler do
         if @dynamic do
           case Poolder.DynamicSupervisor.start_link(@supervisor_name, []) do
             {:ok, pid} ->
-              {:ok, state} = handle_init(pid)
-
               children
               |> Enum.each(fn child ->
                 {:ok, _pid} =
                   DynamicSupervisor.start_child(@supervisor_name, child)
               end)
+
+              handle_init(pid)
 
               {:ok, pid}
 
