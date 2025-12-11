@@ -104,13 +104,13 @@ defmodule Poolder.Scheduler do
         interval = Map.get(jobs, key)
         tref = send_after(key, interval)
 
-        spawn_link(__MODULE__, :try_run, [pid, key, 1, state, &handle_error/4])
+        spawn_link(__MODULE__, :try_run, [pid, key, 1, state, &handle_error/5])
 
         loop(%{state | trefs: Map.put(trefs, key, tref)})
       end
 
       defp handle_msg({:retry_job, key, attempt}, state) do
-        spawn_link(__MODULE__, :try_run, [self(), key, attempt, state, &handle_error/4])
+        spawn_link(__MODULE__, :try_run, [self(), key, attempt, state, &handle_error/5])
         loop(state)
       end
 
@@ -189,15 +189,15 @@ defmodule Poolder.Scheduler do
       def try_run(_pid, _key, _attempt, _state, _error_handler), do: :ok
 
       if @backoff > 0 do
-        def handle_error(_key, _attempt, _error, state), do: {:backoff, @backoff}
+        def handle_error(_key, _attempt, _error, _stacktrace, state), do: {:backoff, @backoff}
       else
-        def handle_error(_key, _attempt, _error, state), do: {:retry, state}
+        def handle_error(_key, _attempt, _error, _stacktrace, state), do: {:retry, state}
       end
 
       @doc "Called when the scheduler hibernates."
       def handle_hibernate(_state), do: :ok
 
-      defoverridable schedule: 2, handle_error: 4, handle_hibernate: 1
+      defoverridable schedule: 2, handle_error: 5, handle_hibernate: 1
 
       ## Private API
       defp cancel_timer(nil), do: :ok
@@ -253,7 +253,7 @@ defmodule Poolder.Scheduler do
 
   @callback handle_hibernate(state :: any) :: any
 
-  @callback handle_error(job :: term, attempt :: integer, error :: any, state :: any) ::
+  @callback handle_error(job :: term, attempt :: integer, error :: any, stacktrace :: any, state :: any) ::
               {:retry, new_state :: any}
               | {:backoff, delay :: integer}
               | :halt

@@ -88,7 +88,7 @@ defmodule Poolder.Worker do
       def loop(state, hibernate_after) do
         receive do
           {:retry_job, data, attempt} ->
-            try_execute(data, attempt, state, &handle_job/2, &handle_error/4)
+            try_execute(data, attempt, state, &handle_job/2, &handle_error/5)
 
           {:call, from, data} ->
             case handle_call(data, from, state) do
@@ -102,7 +102,7 @@ defmodule Poolder.Worker do
             end
 
           message ->
-            try_execute(message, 1, state, &handle_job/2, &handle_error/4)
+            try_execute(message, 1, state, &handle_job/2, &handle_error/5)
         after
           hibernate_after ->
             handle_hibernate(state)
@@ -167,7 +167,7 @@ defmodule Poolder.Worker do
 
           error ->
             (@catcher and
-               case error_handler.(data, attempt, error, state) do
+               case error_handler.(data, attempt, error, __STACKTRACE__, state) do
                  {:retry, new_state} ->
                    try_execute(data, attempt + 1, new_state, handler, error_handler)
 
@@ -195,15 +195,15 @@ defmodule Poolder.Worker do
       def terminate(_reason, _state), do: :ok
 
       if @backoff > 0 do
-        def handle_error(_data, _attempt, _error, state), do: {:backoff, @backoff}
+        def handle_error(_data, _attempt, _error, _stacktrace, state), do: {:backoff, @backoff}
       else
-        def handle_error(_data, _attempt, _error, state), do: {:retry, state}
+        def handle_error(_data, _attempt, _error, _stacktrace, state), do: {:retry, state}
       end
 
       defoverridable handle_init: 1,
                      handle_job: 2,
                      handle_call: 3,
-                     handle_error: 4,
+                     handle_error: 5,
                      handle_hibernate: 1,
                      terminate: 2
     end
@@ -222,7 +222,7 @@ defmodule Poolder.Worker do
   @callback handle_call(msg :: any, from :: pid, state :: any) ::
               {:reply, response :: any, state :: any} | any
 
-  @callback handle_error(data :: any(), attempt :: integer(), error :: any(), state :: any()) ::
+  @callback handle_error(data :: any(), attempt :: integer(), error :: any(), stacktrace :: term(), state :: any()) ::
               {:retry, state :: any()} | {:delay, integer()} | :halt | any()
   @callback handle_hibernate(state :: any()) :: any()
   @callback terminate(reason :: any(), state :: any()) :: any()

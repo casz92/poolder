@@ -97,7 +97,7 @@ defmodule MyWorker do
     end
 
     @impl true
-    def handle_error(_data, attempt, error, state) do
+    def handle_error(_data, attempt, error, _stacktrace, state) do
       IO.puts("Error: #{inspect(error)}")
 
       cond do
@@ -212,7 +212,7 @@ defmodule MyPeriodicJobs do
     end
 
     @impl true
-    def handle_error(_job_name, _attempt, _error, _state) do
+    def handle_error(_job_name, _attempt, _error, _stacktrace, _state) do
       IO.puts("Periodic job: #{inspect(event)}")
     end
 
@@ -360,7 +360,7 @@ end
 - `handle_job/2`: Handles the job execution.
 - `handle_call/3`: Handles synchronous calls.
 - `handle_hibernate/1`: Handles before hibernate.
-- `handle_error/4`: Handles job errors.
+- `handle_error/5`: Handles job errors.
 
 ### Pooler callbacks
 - `handle_init/1`: Handles pool ready.
@@ -373,7 +373,7 @@ end
 ### Scheduler callbacks
 - `handle_init/1`: Initializes the scheduler state.
 - `handle_job/2`: Handles the job execution.
-- `handle_error/4`: Handles job errors.
+- `handle_error/5`: Handles job errors.
 - `handle_hibernate/1`: Handles before hibernate.
 
 
